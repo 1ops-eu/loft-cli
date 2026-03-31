@@ -740,6 +740,31 @@ def validate_stack(spec: StackSpec) -> list[ValidationIssue]:
     return issues
 
 
+def _suggest_kind(unknown: str, known: list[str]) -> str | None:
+    """Suggest closest matching kind for unknown spec kinds."""
+    unknown_lower = unknown.lower()
+    suggestions = {
+        "docker": "service with docker: enabled: true",
+        "compose": "compose_project",
+        "postgres_ensure": "postgres_ensure",
+    }
+    if unknown_lower in suggestions:
+        return f"Did you mean '{suggestions[unknown_lower]}'?"
+    return None
+
+
+def list_spec_kinds() -> list[str]:
+    """Return list of all registered spec kinds."""
+    from loft_cli_core.registry import get_spec_model, load_addons
+
+    load_addons()
+    kinds = []
+    for name in dir(get_spec_model("bootstrap").__class__.__module__):
+        if name.endswith("Spec") and name[0].isupper():
+            kinds.append(name.rstrip("Spec").lower().replace("_", "_"))
+    return sorted(set(kinds)) if kinds else []
+
+
 def validate_spec(spec) -> list[ValidationIssue]:
     # Ensure built-in and addon kinds are registered (idempotent).
     from loft_cli_core.registry import get_validator, load_addons
@@ -754,6 +779,15 @@ def validate_spec(spec) -> list[ValidationIssue]:
 
     validator = get_validator(spec.kind)
     if validator is None:
+        suggestion = _suggest_kind(spec.kind, [])
+        if suggestion:
+            return [
+                ValidationIssue(
+                    "error",
+                    "kind",
+                    f"Unknown spec kind '{spec.kind}'. {suggestion}",
+                )
+            ]
         return [
             ValidationIssue("error", "kind", f"No validator registered for spec kind '{spec.kind}'")
         ]
