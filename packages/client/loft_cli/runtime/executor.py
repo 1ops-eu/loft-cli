@@ -320,9 +320,7 @@ class Executor:
                     step_id=step.id,
                     scope=step.scope.value,
                     status="success",
-                    output=(
-                        f"SSH through WireGuard tunnel verified: " f"{user}@{vpn_ip}:{port_str}"
-                    ),
+                    output=(f"SSH through WireGuard tunnel verified: {user}@{vpn_ip}:{port_str}"),
                 )
             else:
                 # Gate failed — tear down the broken tunnel
@@ -659,6 +657,7 @@ class Executor:
                 port=spec.ssh.port,
                 identity_file=spec.login.private_key,
                 tunnel_comment=tunnel_comment,
+                provider=getattr(spec.host, "provider", None),
             )
             return StepResult(
                 step_index=step.index,
@@ -709,6 +708,7 @@ class Executor:
             ctx = self._ctx
             host_dir = save_wireguard_state(
                 host_name=spec.host.name,
+                provider=getattr(spec.host, "provider", None),
                 spec_name=spec.meta.name,
                 private_key=ctx.wireguard_private_key,
                 public_key=ctx.wireguard_public_key,

@@ -29,16 +29,17 @@ from pathlib import Path
 from loft_cli_core.utils.files import ensure_dir
 
 
-def _wg_host_dir(host_name: str) -> Path:
+def _wg_host_dir(provider: str | None, host_name: str) -> Path:
     """Return the per-host WireGuard state directory (not yet created)."""
     from loft_cli_core.registry.local_paths import get_local_paths
 
-    return get_local_paths().wg_state_base / host_name
+    return get_local_paths().wg_state_base / (provider + "/" if provider else "") + host_name
 
 
 def save_wireguard_state(
     *,
     host_name: str,
+    provider: str | None = None,
     spec_name: str,
     private_key: str,
     public_key: str,
@@ -88,7 +89,7 @@ def save_wireguard_state(
     Path
         The per-host directory that was created/updated.
     """
-    host_dir = _wg_host_dir(host_name)
+    host_dir = _wg_host_dir(provider, host_name)
     ensure_dir(host_dir, mode=0o700)
 
     # Server private key — write-once (stable server identity across re-runs)
@@ -113,10 +114,11 @@ def save_wireguard_state(
     # metadata — provenance + interface/peer summary
     metadata = {
         "host_name": host_name,
+        "provider": provider,
         "spec_name": spec_name,
         "deployed_at": datetime.now(UTC).isoformat(),
         "interface": interface,
-        "client_interface": f"wg-{host_name}"[:15],
+        "client_interface": f"wg-{provider + '--' if provider else ''}{host_name}"[:15],
         "address": address,
         "endpoint": endpoint,
         "peer_address": peer_address,

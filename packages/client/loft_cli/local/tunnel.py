@@ -24,27 +24,34 @@ def _wg_state_base() -> Path:
     return get_local_paths().wg_state_base
 
 
-def _interface_name(host_name: str) -> str:
+def _interface_name(host_name: str, provider: str | None = None) -> str:
     """Derive the client-side WireGuard interface name from the host name.
 
-    Uses ``wg-{host}`` (truncated to 15 chars — Linux interface name limit).
+    Uses ``wg-{provider}--{host}`` (truncated to 15 chars — Linux interface name limit).
+    When provider is not set, uses ``wg-{host}`` for backward compatibility.
     Server side always keeps ``wg0`` (it only has one tunnel).
     """
-    raw = f"wg-{host_name}"
+    if provider:
+        raw = f"wg-{provider}--{host_name}"
+    else:
+        raw = f"wg-{host_name}"
     return raw[:15]
 
 
-def _host_dir(host_name: str) -> Path:
+def _host_dir(host_name: str, provider: str | None = None) -> Path:
     """Return the per-host WireGuard state directory."""
-    return _wg_state_base() / host_name
+    base = _wg_state_base()
+    if provider:
+        return base / provider / host_name
+    return base / host_name
 
 
-def _client_conf_path(host_name: str) -> Path:
+def _client_conf_path(host_name: str, provider: str | None = None) -> Path:
     """Return the path to the client wg-quick config file."""
-    return _host_dir(host_name) / "client.conf"
+    return _host_dir(host_name, provider) / "client.conf"
 
 
-def tunnel_up(host_name: str) -> tuple[bool, str]:
+def tunnel_up(host_name: str, provider: str | None = None) -> tuple[bool, str]:
     """Bring up the WireGuard tunnel for a host.
 
     Creates a temporary config file named after the interface so
@@ -52,11 +59,11 @@ def tunnel_up(host_name: str) -> tuple[bool, str]:
 
     Returns (success: bool, message: str).
     """
-    conf_path = _client_conf_path(host_name)
+    conf_path = _client_conf_path(host_name, provider)
     if not conf_path.exists():
         return False, f"No client.conf found at {conf_path} — run loft-cli apply first"
 
-    iface = _interface_name(host_name)
+    iface = _interface_name(host_name, provider)
 
     # Check if the interface is already active
     if _is_interface_active(iface):
@@ -94,7 +101,7 @@ def tunnel_up(host_name: str) -> tuple[bool, str]:
             iface_conf.unlink(missing_ok=True)
 
 
-def tunnel_down(host_name: str) -> tuple[bool, str]:
+def tunnel_down(host_name: str, provider: str | None = None) -> tuple[bool, str]:
     """Tear down the WireGuard tunnel for a host.
 
     Creates a temporary config file (mirroring ``tunnel_up``) so
@@ -104,12 +111,12 @@ def tunnel_down(host_name: str) -> tuple[bool, str]:
 
     Returns (success: bool, message: str).
     """
-    iface = _interface_name(host_name)
+    iface = _interface_name(host_name, provider)
 
     if not _is_interface_active(iface):
         return True, f"Tunnel {iface} is not active"
 
-    conf_path = _client_conf_path(host_name)
+    conf_path = _client_conf_path(host_name, provider)
     iface_conf = conf_path.parent / f"{iface}.conf" if conf_path.exists() else None
 
     try:
@@ -155,18 +162,20 @@ def tunnel_status() -> list[dict]:
     Scans ``{wg_state_base}/*/metadata.json`` for host info and
     cross-references with active interfaces via ``wg show``.
 
+    Handles both legacy ``{base}/{host}/`` and provider-scoped
+    ``{base}/{provider}/{host}/`` directory structures.
+
     Returns a list of dicts with keys:
-        host_name, interface, endpoint, vpn_ip, peer_address, active, deployed_at
+        host_name, provider, interface, endpoint, vpn_ip, peer_address, active, deployed_at
     """
     base = _wg_state_base()
     if not base.exists():
         return []
 
-    # Get list of active WireGuard interfaces
     active_interfaces = _get_active_interfaces()
 
     hosts = []
-    for host_dir in sorted(base.iterdir()):
+    for host_dir in sorted(base.rglob("*")):
         if not host_dir.is_dir():
             continue
 
@@ -179,13 +188,15 @@ def tunnel_status() -> list[dict]:
         except (json.JSONDecodeError, OSError):
             continue
 
-        host_name = host_dir.name
-        iface = _interface_name(host_name)
+        host_name = metadata.get("host_name", host_dir.name)
+        provider = metadata.get("provider")
+        iface = _interface_name(host_name, provider)
         vpn_ip = metadata.get("address", "").split("/")[0]
 
         hosts.append(
             {
                 "host_name": host_name,
+                "provider": provider,
                 "interface": iface,
                 "endpoint": metadata.get("endpoint", ""),
                 "vpn_ip": vpn_ip,

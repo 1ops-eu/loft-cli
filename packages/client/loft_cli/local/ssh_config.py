@@ -39,32 +39,45 @@ def write_ssh_conf_d(
     port: int,
     identity_file: str | None = None,
     tunnel_comment: str | None = None,
+    provider: str | None = None,
 ) -> Path:
-    """Write {ssh_conf_d_base}/{host_name}.conf and return the path.
+    """Write {ssh_conf_d_base}/{provider--}{host_name}.conf and return the path.
 
     Idempotent: overwrites own file on re-run.
 
     Parameters
     ----------
+    provider:
+        When set, uses {provider}--{host_name} as the filename and Host alias
+        to avoid key collisions across multiple providers with same host name.
     tunnel_comment:
         Optional comment noting a WireGuard tunnel dependency, e.g.
         ``# Requires: loft-cli tunnel up {host}``.  Inserted as the
         second line of the generated config.
     """
     base = _conf_d_base()
+    if provider:
+        base = base / provider
     base.mkdir(parents=True, exist_ok=True)
     base.chmod(0o700)
 
-    conf_file = base / f"{host_name}.conf"
+    if provider:
+        conf_file_name = f"{provider}--{host_name}.conf"
+        host_alias = f"{provider}--{host_name}"
+    else:
+        conf_file_name = f"{host_name}.conf"
+        host_alias = host_name
+
+    conf_file = base / conf_file_name
 
     lines = [
-        f"# loft-cli managed: {host_name}",
+        f"# loft-cli managed: {host_alias}",
     ]
     if tunnel_comment:
         lines.append(tunnel_comment)
     lines.extend(
         [
-            f"Host {host_name}",
+            f"Host {host_alias}",
             f"  HostName {address}",
             f"  User {user}",
             f"  Port {port}",
@@ -81,11 +94,23 @@ def write_ssh_conf_d(
     return conf_file
 
 
-def remove_ssh_conf_d(host_name: str) -> None:
-    """Remove the conf.d file for a host."""
-    conf_file = _conf_d_base() / f"{host_name}.conf"
-    if conf_file.exists():
-        conf_file.unlink()
+def remove_ssh_conf_d(host_name: str, provider: str | None = None) -> None:
+    """Remove the conf.d file for a host.
+
+    Handles both legacy {host}.conf and provider-scoped {provider}--{host}.conf.
+    """
+    base = _conf_d_base()
+
+    if provider:
+        provider_dir = base / provider
+        if provider_dir.exists():
+            provider_conf = provider_dir / f"{provider}--{host_name}.conf"
+            if provider_conf.exists():
+                provider_conf.unlink()
+    else:
+        conf_file = base / f"{host_name}.conf"
+        if conf_file.exists():
+            conf_file.unlink()
 
 
 def ensure_include(config_path: Path) -> None:

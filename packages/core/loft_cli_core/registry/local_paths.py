@@ -105,6 +105,7 @@ class LocalPathsConfig:
     wg_state_base: Path = field(default_factory=lambda: _UNSET)
     inventory_db_path: Path = field(default_factory=lambda: _UNSET)
     log_dir: Path = field(default_factory=lambda: _UNSET)
+    keys_base: Path = field(default_factory=lambda: _UNSET)
 
     def __post_init__(self) -> None:
         """Fill unset paths from state_dir or built-in defaults."""
@@ -130,6 +131,12 @@ class LocalPathsConfig:
                 if self.state_dir
                 else Path("~/.loft-cli/runs").expanduser()
             )
+        if self.keys_base is _UNSET:
+            self.keys_base = (
+                (self.state_dir / "keys")
+                if self.state_dir
+                else Path("~/.loft-cli/keys").expanduser()
+            )
 
 
 # Module-level singleton -- replaced wholesale on each call to register_local_paths().
@@ -145,3 +152,35 @@ def register_local_paths(config: LocalPathsConfig) -> None:
 def get_local_paths() -> LocalPathsConfig:
     """Return the currently active local paths config."""
     return _config
+
+
+def ssh_key_dir(provider: str, host: str) -> Path:
+    """Return the provider-scoped SSH key directory.
+
+    Example: ~/.loft-cli/keys/{provider}/{host}/
+    """
+    return get_local_paths().keys_base / provider / host
+
+
+def _ssh_conf_d_base(provider: str | None = None) -> Path:
+    """Return the SSH conf.d base directory, optionally with provider scope.
+
+    When provider is set, returns {base}/{provider}/
+    """
+    base = get_local_paths().ssh_conf_d_base
+    if provider:
+        return base / provider
+    return base
+
+
+def _wg_host_dir(provider: str | None = None, host: str | None = None) -> Path:
+    """Return the WireGuard host directory, optionally provider-scoped.
+
+    When provider is set, returns {base}/{provider}/{host}/
+    """
+    base = get_local_paths().wg_state_base
+    if provider and host:
+        return base / provider / host
+    elif host:
+        return base / host
+    return base

@@ -20,6 +20,7 @@ class HostBlock(BaseModel):
     name: str
     address: str
     os_family: str = "debian"
+    provider: str = ""
 
 
 class LoginBlock(BaseModel):

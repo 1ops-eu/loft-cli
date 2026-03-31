@@ -45,6 +45,17 @@ class ValidationIssue:
 def validate_bootstrap(spec: BootstrapSpec) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
 
+    # provider required when using auto-managed keys
+    if not spec.admin_user.pubkeys and not spec.host.provider:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "host.provider",
+                "host.provider is required when admin_user.pubkeys is not set. "
+                "Set provider to the cloud platform name (e.g. hetzner, ionos, unknown).",
+            )
+        )
+
     # SSH port range
     if not (1 <= spec.ssh.port <= 65535):
         issues.append(
@@ -503,8 +514,7 @@ def validate_systemd_unit(spec: SystemdUnitSpec) -> list[ValidationIssue]:
             ValidationIssue(
                 "error",
                 "unit.restart",
-                f"Invalid restart policy '{u.restart}'. "
-                f"Must be one of: {', '.join(valid_restart)}",
+                f"Invalid restart policy '{u.restart}'. Must be one of: {', '.join(valid_restart)}",
             )
         )
 
@@ -514,7 +524,7 @@ def validate_systemd_unit(spec: SystemdUnitSpec) -> list[ValidationIssue]:
             ValidationIssue(
                 "error",
                 "unit.type",
-                f"Invalid service type '{u.type}'. " f"Must be one of: {', '.join(valid_types)}",
+                f"Invalid service type '{u.type}'. Must be one of: {', '.join(valid_types)}",
             )
         )
 
@@ -544,8 +554,7 @@ def validate_systemd_unit(spec: SystemdUnitSpec) -> list[ValidationIssue]:
                 ValidationIssue(
                     "error",
                     "logrotate.frequency",
-                    f"Invalid frequency '{lr.frequency}'. "
-                    f"Must be one of: {', '.join(valid_freq)}",
+                    f"Invalid frequency '{lr.frequency}'. Must be one of: {', '.join(valid_freq)}",
                 )
             )
         if lr.rotate < 1:

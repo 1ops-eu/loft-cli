@@ -112,6 +112,7 @@ class InventoryDB:
         name: str,
         address: str,
         bootstrap_status: str,
+        provider: str | None = None,
         os_family: str = "",
         ssh_alias: str = "",
         ssh_host: str = "",
@@ -124,6 +125,11 @@ class InventoryDB:
         changed_by: str = "loft-cli",
     ) -> None:
         """INSERT INTO vv_server — versionize trigger handles history."""
+        if provider:
+            server_id = f"{provider}/{name}"
+        else:
+            server_id = id or name
+
         self._conn.execute(
             """
             INSERT INTO vv_server (
@@ -134,7 +140,7 @@ class InventoryDB:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                id,
+                server_id,
                 name,
                 address,
                 os_family,
@@ -154,6 +160,27 @@ class InventoryDB:
 
     def get_server(self, server_id: str) -> dict | None:
         result = self._conn.execute("SELECT * FROM vv_server WHERE id = ?", (server_id,))
+        row = result.fetchone()
+        if row is None:
+            return None
+        cols = [d[0] for d in result.description]
+        return dict(zip(cols, row, strict=False))
+
+    def get_server_by_name(self, name: str, provider: str | None = None) -> dict | None:
+        """Get server by name, optionally scoped by provider.
+
+        Tries composite key first, then falls back to plain name.
+        """
+        if provider:
+            result = self._conn.execute(
+                "SELECT * FROM vv_server WHERE id = ?", (f"{provider}/{name}",)
+            )
+            row = result.fetchone()
+            if row:
+                cols = [d[0] for d in result.description]
+                return dict(zip(cols, row, strict=False))
+
+        result = self._conn.execute("SELECT * FROM vv_server WHERE name = ?", (name,))
         row = result.fetchone()
         if row is None:
             return None

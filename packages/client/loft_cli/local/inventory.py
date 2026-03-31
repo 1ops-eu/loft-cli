@@ -40,6 +40,7 @@ def record_bootstrap(
         name=spec.host.name,
         address=spec.host.address,
         bootstrap_status="bootstrapped" if "success" in status else "failed",
+        provider=getattr(spec.host, "provider", None),
         os_family=spec.host.os_family,
         ssh_alias=spec.local.ssh_config.host_alias or spec.host.name,
         ssh_host=spec.host.address,

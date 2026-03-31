@@ -1,12 +1,13 @@
 """Orchestrate removal of all local loft-cli state for a decommissioned host.
 
-``loft-cli remove <host>`` is the lifecycle endpoint: apply creates,
+``loft-cli remove <provider/host>`` is the lifecycle endpoint: apply creates,
 doctor monitors, remove cleans up.  It tears down:
 
 1. Active WireGuard tunnel (if running)
-2. WireGuard local state (``~/.wg/loft-cli/{host}/``)
-3. SSH conf.d entry (``~/.ssh/conf.d/loft-cli/{host}.conf``)
-4. Inventory record (marked as decommissioned)
+2. WireGuard local state (``~/.wg/loft-cli/{provider}/{host}/``)
+3. SSH conf.d entry (``~/.ssh/conf.d/loft-cli/{provider}/{provider}--{host}.conf``)
+4. SSH keys (``~/.loft-cli/keys/{provider}/{host}/``)
+5. Inventory record (marked as decommissioned)
 """
 
 from __future__ import annotations
@@ -17,8 +18,10 @@ if TYPE_CHECKING:
     from rich.console import Console
 
 
-def remove_host(host_name: str, *, console: Console | None = None) -> list[dict]:
+def remove_host(identifier: str, *, console: Console | None = None) -> list[dict]:
     """Remove all local state for a host.
+
+    Accepts either ``host`` (legacy) or ``provider/host`` format.
 
     Returns a list of result dicts: [{"action": ..., "status": ..., "detail": ...}].
     """
@@ -29,11 +32,15 @@ def remove_host(host_name: str, *, console: Console | None = None) -> list[dict]
 
         console = Console()
 
+    provider, host_name = _parse_identifier(identifier)
+
+    console.print(f"[bold]Removing host:[/bold] {identifier}")
+
     # 1. Tear down active WireGuard tunnel
     try:
         from loft_cli.local.tunnel import tunnel_down
 
-        ok, msg = tunnel_down(host_name)
+        ok, msg = tunnel_down(host_name, provider)
         results.append(
             {"action": "tunnel_down", "status": "ok" if ok else "skipped", "detail": msg}
         )
@@ -44,9 +51,14 @@ def remove_host(host_name: str, *, console: Console | None = None) -> list[dict]
 
     # 2. Remove WireGuard local state
     try:
-        from loft_cli.local.wireguard_store import _wg_host_dir
+        from loft_cli_core.registry.local_paths import get_local_paths
 
-        wg_dir = _wg_host_dir(host_name)
+        paths = get_local_paths()
+        if provider:
+            wg_dir = paths.wg_state_base / provider / host_name
+        else:
+            wg_dir = paths.wg_state_base / host_name
+
         if wg_dir.exists():
             import shutil
 
@@ -68,20 +80,52 @@ def remove_host(host_name: str, *, console: Console | None = None) -> list[dict]
     try:
         from loft_cli.local.ssh_config import remove_ssh_conf_d
 
-        remove_ssh_conf_d(host_name)
+        remove_ssh_conf_d(host_name, provider)
         results.append(
             {
                 "action": "ssh_config",
                 "status": "ok",
-                "detail": f"Removed SSH config for {host_name}",
+                "detail": f"Removed SSH config for {identifier}",
             }
         )
-        console.print(f"  [green]SSH config: removed conf.d entry for {host_name}[/green]")
+        console.print(f"  [green]SSH config: removed conf.d entry for {identifier}[/green]")
     except Exception as e:
         results.append({"action": "ssh_config", "status": "error", "detail": str(e)})
         console.print(f"  [yellow]SSH config removal: {e}[/yellow]")
 
-    # 4. Mark inventory record as decommissioned
+    # 4. Remove SSH keys
+    try:
+        from loft_cli_core.registry.local_paths import ssh_key_dir
+
+        if provider:
+            key_dir = ssh_key_dir(provider, host_name)
+            if key_dir.exists():
+                import shutil
+
+                shutil.rmtree(key_dir)
+                results.append(
+                    {"action": "ssh_keys", "status": "ok", "detail": f"Removed {key_dir}"}
+                )
+                console.print(f"  [green]SSH keys: removed {key_dir}[/green]")
+            else:
+                results.append(
+                    {"action": "ssh_keys", "status": "skipped", "detail": "No SSH keys found"}
+                )
+                console.print("  [dim]SSH keys: none found[/dim]")
+        else:
+            results.append(
+                {
+                    "action": "ssh_keys",
+                    "status": "skipped",
+                    "detail": "No provider, skipping key removal",
+                }
+            )
+            console.print("  [dim]SSH keys: provider required for key removal[/dim]")
+    except Exception as e:
+        results.append({"action": "ssh_keys", "status": "error", "detail": str(e)})
+        console.print(f"  [yellow]SSH keys removal: {e}[/yellow]")
+
+    # 5. Mark inventory record as decommissioned
     try:
         import os
 
@@ -92,13 +136,21 @@ def remove_host(host_name: str, *, console: Console | None = None) -> list[dict]
         db = InventoryDB(db_path=db_path)
         try:
             db.open()
-            server = db.get_server(host_name)
+            if provider:
+                server_id = f"{provider}/{host_name}"
+            else:
+                server_id = host_name
+
+            server = db.get_server(server_id)
+            if not server and host_name:
+                server = db.get_server_by_name(host_name, provider)
             if server:
                 db.upsert_server(
-                    id=host_name,
+                    id=server_id,
                     name=server.get("name", host_name),
                     address=server.get("address", ""),
                     bootstrap_status="decommissioned",
+                    provider=provider,
                     os_family=server.get("os_family", ""),
                     ssh_alias=server.get("ssh_alias", ""),
                     ssh_host=server.get("ssh_host", ""),
@@ -113,10 +165,10 @@ def remove_host(host_name: str, *, console: Console | None = None) -> list[dict]
                     {
                         "action": "inventory",
                         "status": "ok",
-                        "detail": f"Marked {host_name} as decommissioned",
+                        "detail": f"Marked {server_id} as decommissioned",
                     }
                 )
-                console.print(f"  [green]Inventory: marked {host_name} as decommissioned[/green]")
+                console.print(f"  [green]Inventory: marked {server_id} as decommissioned[/green]")
             else:
                 results.append(
                     {
@@ -133,3 +185,16 @@ def remove_host(host_name: str, *, console: Console | None = None) -> list[dict]
         console.print(f"  [yellow]Inventory update: {e}[/yellow]")
 
     return results
+
+
+def _parse_identifier(identifier: str) -> tuple[str | None, str]:
+    """Parse identifier into (provider, host_name).
+
+    Supports:
+    - "host" -> (None, "host")
+    - "provider/host" -> ("provider", "host")
+    """
+    if "/" in identifier:
+        parts = identifier.split("/", 1)
+        return parts[0], parts[1]
+    return None, identifier
