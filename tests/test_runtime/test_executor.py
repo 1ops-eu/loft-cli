@@ -103,6 +103,49 @@ def test_dependency_failure_skips_dependent(mock_ssh_session, mocker):
     assert result_b.status == "skipped"
 
 
+def test_skipped_gate_does_not_abort_plan(mock_ssh_session, mocker):
+    """When a gate step returns 'skipped' (e.g. wg-quick not installed), the plan
+    should still succeed and all subsequent steps should be skipped — not failed."""
+    gate_step = _step(
+        "wg_gate",
+        kind=StepKind.GATE,
+        scope=StepScope.LOCAL,
+        gate=True,
+        command="tunnel_ssh_gate:myhost:10.0.0.1:2222:admin",
+    )
+    after_gate = _step("delete_rule", scope=StepScope.REMOTE)
+
+    p = _make_plan([gate_step, after_gate])
+
+    # Make the executor return "skipped" for the gate step (infra not configured)
+    executor = Executor(plan=p, ssh_session=mock_ssh_session)
+
+    def fake_execute_gate(step):
+        return StepResult(
+            step_index=step.index,
+            step_id=step.id,
+            scope=step.scope.value,
+            status="skipped",
+            output="WireGuard tunnel gate skipped — wg-quick not available",
+        )
+
+    executor._execute_gate = fake_execute_gate
+    result = executor.apply(dry_run=False)
+
+    # Plan should succeed (not fail) when gate is skipped
+    assert result.status == "success"
+    # aborted_at must not be set — we didn't hard-abort
+    assert result.aborted_at is None
+
+    gate_result = next(r for r in result.step_results if r.step_id == "wg_gate")
+    assert gate_result.status == "skipped"
+
+    # The step after the gate must also be skipped (not executed!)
+    # so destructive follow-on commands (like delete_open_ssh_rule) never run.
+    after_result = next(r for r in result.step_results if r.step_id == "delete_rule")
+    assert after_result.status == "skipped"
+
+
 def test_local_step_failure_gives_warning_status(mock_ssh_session):
     """If a LOCAL step fails, status should be success_with_local_warnings (not failed)."""
     remote_step = _step("remote", scope=StepScope.REMOTE)

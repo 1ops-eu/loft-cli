@@ -77,6 +77,11 @@ class Executor:
         started_at = datetime.now(UTC).isoformat()
         step_results: list[StepResult] = []
         aborted_at: int | None = None
+        # gate_skipped_at tracks a gate step that returned "skipped" (e.g. because
+        # wg-quick is not installed).  Steps after a skipped gate are also skipped
+        # so that destructive follow-on steps (e.g. delete_open_ssh_rule) never run,
+        # but the overall plan status remains "success" rather than "failed".
+        gate_skipped_at: int | None = None
         remote_failed = False
         local_warnings = False
 
@@ -110,11 +115,35 @@ class Executor:
                 )
                 continue
 
+            if gate_skipped_at is not None:
+                # A gate was skipped (infrastructure not configured).  Skip all
+                # remaining steps so no destructive follow-on commands run, but
+                # do NOT set aborted_at so the final status stays "success".
+                step_results.append(
+                    StepResult(
+                        step_index=step.index,
+                        step_id=step.id,
+                        scope=step.scope.value,
+                        status="skipped",
+                        error="Gate skipped — subsequent steps skipped",
+                    )
+                )
+                continue
+
             result = self._execute_step(step, dry_run)
             step_results.append(result)
             self._print_step(step, result)
 
-            if result.status == "failed":
+            if result.status == "skipped" and step.gate:
+                # Gate skipped gracefully (e.g. wg-quick not installed).
+                # Record it so subsequent steps are also skipped without failing.
+                gate_skipped_at = step.index
+                self._console.print(
+                    f"\n[yellow]⚠ Gate skipped at step {step.index}: {step.id}[/yellow]"
+                )
+                if result.output:
+                    self._console.print(f"[dim]{result.output}[/dim]")
+            elif result.status == "failed":
                 if step.index == 0:
                     # Preflight connection failure — abort immediately with a clear message.
                     # Continuing makes no sense: every subsequent step would fail with the
@@ -295,6 +324,37 @@ class Executor:
             # Bring up the tunnel
             up_ok, up_msg = tunnel_up(host_name)
             if not up_ok:
+                # Distinguish "infrastructure not configured" from real failures.
+                # When wg-quick is not installed, or passwordless sudo is not
+                # configured, the tunnel gate cannot run — but that is an
+                # environment-setup issue, not a spec error.  Skip gracefully so
+                # the plan continues (server stays reachable via public IP) rather
+                # than aborting with a hard failure.
+                _infra_not_configured = (
+                    "wg-quick not found" in up_msg
+                    or "sudo access required" in up_msg
+                    or (
+                        # sudo requires a password (no passwordless sudo):
+                        # stderr contains "sudo:" + one of the password-prompt
+                        # indicators produced by sudo when no tty is present.
+                        "sudo:" in up_msg
+                        and any(
+                            kw in up_msg.lower()
+                            for kw in ("password", "no tty", "askpass", "a password is required")
+                        )
+                    )
+                )
+                if _infra_not_configured:
+                    return StepResult(
+                        step_index=step.index,
+                        step_id=step.id,
+                        scope=step.scope.value,
+                        status="skipped",
+                        output=(
+                            f"WireGuard tunnel gate skipped — wg-quick not available or "
+                            f"passwordless sudo not configured on this machine: {up_msg}"
+                        ),
+                    )
                 return StepResult(
                     step_index=step.index,
                     step_id=step.id,
