@@ -76,6 +76,18 @@ def validate_bootstrap(spec: BootstrapSpec) -> list[ValidationIssue]:
             )
         )
 
+    # Empty pubkeys require a provider (cloud provider will inject keys at provision time)
+    if not spec.admin_user.pubkeys and not spec.host.provider:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "admin_user.pubkeys",
+                "admin_user.pubkeys is empty and host.provider is not set — "
+                "either supply at least one pubkey or set host.provider so the "
+                "cloud provider can inject SSH keys at provision time",
+            )
+        )
+
     # WireGuard completeness
     wg = spec.wireguard
     if wg.enabled:
