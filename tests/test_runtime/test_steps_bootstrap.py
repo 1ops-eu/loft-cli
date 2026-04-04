@@ -155,6 +155,10 @@ def test_enable_wireguard():
     cmd = enable_wireguard("wg0")
     assert "wg-quick@wg0" in cmd
     assert "enable" in cmd
+    # Must be wrapped in bash -c so Fabric's sudo() elevates the entire
+    # compound command — wg-quick up requires root.
+    assert cmd.startswith("bash -c '")
+    assert "wg-quick up wg0" in cmd
 
 
 def test_allow_ssh_on_wireguard_interface_only():

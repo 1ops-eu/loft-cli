@@ -65,7 +65,11 @@ def load_wireguard_module() -> str:
 
 
 def enable_wireguard(interface: str) -> str:
-    return f"systemctl enable wg-quick@{interface} && wg-quick up {interface}"
+    # Wrap in bash -c so that Fabric's sudo() elevates the entire compound
+    # command.  Without this, only `systemctl enable` runs as root and
+    # `wg-quick up` falls back to the unprivileged caller — causing it to
+    # fail because wg-quick requires root.
+    return f"bash -c 'systemctl enable wg-quick@{interface} && wg-quick up {interface}'"
 
 
 def verify_wireguard(interface: str) -> str:
