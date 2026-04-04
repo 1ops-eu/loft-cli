@@ -680,40 +680,38 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
             )
         )
 
-        # Tunnel safety gate + open-rule deletion are only needed when
-        # registered_peers_only=true. In that mode SSH is locked to a single
-        # peer IP so a failed tunnel means permanent lockout. The gate verifies
-        # the tunnel works before deleting the open rule.
-        # When registered_peers_only=false, SSH is allowed on the WireGuard
-        # interface from any IP — no lockout risk, so neither the gate nor the
-        # open-rule deletion is emitted.
-        if spec.firewall.registered_peers_only:
-            wg_server_vpn_ip = str(_ip_wg.ip_interface(spec.wireguard.address).ip)
-            steps.append(
-                _s(
-                    "verify_ssh_over_wireguard_tunnel",
-                    (
-                        f"Verify SSH through WireGuard tunnel "
-                        f"({spec.admin_user.name}@{wg_server_vpn_ip}:{spec.ssh.port})"
-                    ),
-                    L,
-                    StepKind.GATE,
-                    command=(
-                        f"tunnel_ssh_gate:{spec.host.name}:{wg_server_vpn_ip}"
-                        f":{spec.ssh.port}:{spec.admin_user.name}"
-                    ),
-                    gate=True,
-                    rollback_hint=(
-                        "WireGuard tunnel SSH verification failed. The open SSH rule was NOT deleted — "
-                        "the server is still accessible via its public IP. "
-                        "Check WireGuard configuration, ensure wg-quick is installed locally, "
-                        "and verify the tunnel can be established."
-                    ),
-                    tags=["wireguard", "ssh", "gate", "tunnel"],
-                )
+        # Tunnel safety gate: verify SSH through the VPN IP, then delete the
+        # open-to-all SSH rule (delete_open_ssh_rule depends_on this step).
+        # gate=False so that local wg-quick failures (missing tool, sudo
+        # unavailable, network issue) do NOT abort the plan — they set
+        # local_warnings instead.  The depends_on on delete_open_ssh_rule
+        # ensures it is skipped whenever this step fails, leaving the open
+        # SSH rule intact and the server reachable via its public IP.
+        wg_server_vpn_ip = str(_ip_wg.ip_interface(spec.wireguard.address).ip)
+        steps.append(
+            _s(
+                "verify_ssh_over_wireguard_tunnel",
+                (
+                    f"Verify SSH through WireGuard tunnel "
+                    f"({spec.admin_user.name}@{wg_server_vpn_ip}:{spec.ssh.port})"
+                ),
+                L,
+                StepKind.GATE,
+                command=(
+                    f"tunnel_ssh_gate:{spec.host.name}:{wg_server_vpn_ip}"
+                    f":{spec.ssh.port}:{spec.admin_user.name}"
+                ),
+                gate=False,
+                rollback_hint=(
+                    "WireGuard tunnel SSH verification failed. The open SSH rule was NOT deleted — "
+                    "the server is still accessible via its public IP. "
+                    "Check WireGuard configuration, ensure wg-quick is installed locally, "
+                    "and verify the tunnel can be established."
+                ),
+                tags=["wireguard", "ssh", "tunnel"],
             )
         )
-        idx_wg_gate = len(steps) - 1
+        idx_tunnel_gate = len(steps) - 1
 
         steps.append(
             _s(
@@ -723,7 +721,7 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
                 StepKind.SSH_COMMAND,
                 command=bs.delete_open_ssh_rule(spec.ssh.port),
                 sudo=True,
-                depends_on=[idx_wg_gate],
+                depends_on=[idx_tunnel_gate],
                 tags=["ssh", "firewall", "wireguard"],
             )
 

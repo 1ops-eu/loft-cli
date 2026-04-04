@@ -2,14 +2,12 @@
 
 Validates that when WireGuard is enabled with registered_peers_only=true:
 1. allow_ssh_on_wireguard — remote SSH command
-2. verify_ssh_over_wireguard_tunnel — local GATE step
-3. delete_open_ssh_rule — remote SSH command
+2. verify_ssh_over_wireguard_tunnel — local GATE step (gate=False)
+3. delete_open_ssh_rule — remote SSH command, depends_on tunnel step
 
-The gate must come between allow and delete so that the open SSH rule
-is preserved if tunnel verification fails.
-
-When registered_peers_only=false (the default), only allow_ssh_on_wireguard
-is emitted — no lockout risk means no gate and no open-rule deletion.
+The tunnel step has gate=False so that local wg-quick failures do not abort
+the plan.  Instead, delete_open_ssh_rule depends_on the tunnel step and is
+skipped when tunnel verification fails, leaving the open SSH rule intact.
 """
 
 from __future__ import annotations
@@ -172,7 +170,9 @@ class TestWireGuardTunnelGate:
         p = _make_wg_plan(tmp_path)
         gate = next(s for s in p.steps if s.id == "verify_ssh_over_wireguard_tunnel")
         assert gate.kind == StepKind.GATE
-        assert gate.gate is True
+        # gate=False so that local wg-quick failures don't abort the plan;
+        # delete_open_ssh_rule depends_on this step instead.
+        assert gate.gate is False
 
     def test_gate_has_tunnel_ssh_gate_command(self, tmp_path):
         p = _make_wg_plan(tmp_path)
@@ -199,8 +199,8 @@ class TestWireGuardTunnelGate:
         p = _make_wg_plan(tmp_path)
         gate = next(s for s in p.steps if s.id == "verify_ssh_over_wireguard_tunnel")
         assert "wireguard" in gate.tags
-        assert "gate" in gate.tags
         assert "tunnel" in gate.tags
+        # "gate" tag removed — step is no longer a hard abort gate
 
     def test_three_wg_steps_in_order(self, tmp_path):
         """allow_ssh_on_wireguard < verify_ssh_over_wireguard_tunnel < delete_open_ssh_rule."""
@@ -238,14 +238,19 @@ class TestWireGuardTunnelGate:
         for s in p.steps:
             assert s.id not in wg_step_ids, f"Step {s.id} should not exist without WireGuard"
 
-    def test_plan_has_two_gates_with_registered_peers_only(self, tmp_path):
-        """WG-enabled plan with registered_peers_only=true: admin login gate + tunnel gate = 2."""
-        p = _make_wg_plan(tmp_path, registered_peers_only=True)
+    def test_plan_has_two_gates_with_wg(self, tmp_path):
+        """WG-enabled plan should have only the admin login gate (1 gate).
+
+        The tunnel verification step is no longer a hard-abort gate —
+        delete_open_ssh_rule depends_on it instead so that local
+        wg-quick failures don't abort the entire plan.
+        """
+        p = _make_wg_plan(tmp_path)
         gates = [s for s in p.steps if s.gate]
-        assert len(gates) == 2
+        assert len(gates) == 1
         gate_ids = {g.id for g in gates}
         assert "verify_admin_login_on_new_port" in gate_ids
-        assert "verify_ssh_over_wireguard_tunnel" in gate_ids
+        assert "verify_ssh_over_wireguard_tunnel" not in gate_ids
 
     def test_plan_has_one_gate_without_registered_peers_only(self, tmp_path):
         """WG-enabled plan with registered_peers_only=false: only admin login gate = 1."""
@@ -259,3 +264,18 @@ class TestWireGuardTunnelGate:
         gate = next(s for s in p.steps if s.id == "verify_ssh_over_wireguard_tunnel")
         assert "10.10.0.1" in gate.description
         assert "2222" in gate.description
+
+    def test_delete_ssh_rule_depends_on_tunnel_gate(self, tmp_path):
+        """delete_open_ssh_rule must depend on the tunnel verification step.
+
+        This ensures that if the tunnel check fails (e.g. wg-quick is
+        unavailable), the open-to-all SSH rule is NOT removed and the server
+        remains accessible via its public IP.
+        """
+        p = _make_wg_plan(tmp_path)
+        gate = next(s for s in p.steps if s.id == "verify_ssh_over_wireguard_tunnel")
+        delete = next(s for s in p.steps if s.id == "delete_open_ssh_rule")
+        assert gate.index in delete.depends_on, (
+            f"delete_open_ssh_rule.depends_on {delete.depends_on} must include "
+            f"verify_ssh_over_wireguard_tunnel index {gate.index}"
+        )
