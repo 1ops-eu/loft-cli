@@ -163,6 +163,20 @@ def test_enable_wireguard():
     assert "wg-quick up wg0" in cmd
 
 
+def test_enable_wireguard_wrapped_in_bash_c():
+    """enable_wireguard must wrap the && chain in bash -c so Fabric sudo elevates everything.
+
+    Without the bash -c wrapper, Fabric's ``sudo -S -p '' <cmd>`` only elevates
+    the first simple command before ``&&``, causing ``wg-quick up`` to run
+    unprivileged and fail with a permission error.
+    """
+    cmd = enable_wireguard("wg0")
+    assert cmd.startswith("bash -c '"), (
+        f'enable_wireguard must start with "bash -c \'" for proper sudo elevation; got: {cmd!r}'
+    )
+    assert "wg-quick up wg0" in cmd
+
+
 def test_allow_ssh_on_wireguard_interface_only():
     """registered_peers_only=False: restrict SSH to wg0 interface, any peer."""
     cmd = allow_ssh_on_wireguard(2222, "wg0", peer_ip=None)
