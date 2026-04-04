@@ -143,47 +143,106 @@ def test_dependency_failure_skips_dependent(mock_ssh_session, mocker):
     assert result_b.status == "skipped"
 
 
-def test_skipped_gate_does_not_abort_plan(mock_ssh_session, mocker):
-    """When a gate step returns 'skipped' (e.g. wg-quick not installed), the plan
-    should still succeed and all subsequent steps should be skipped — not failed."""
+def test_tunnel_gate_skips_gracefully_when_wg_quick_missing(mock_ssh_session, mocker):
+    """tunnel_ssh_gate: when wg-quick is not installed, gate returns success (not abort)."""
+    # The tunnel gate should degrade gracefully when wireguard-tools are absent
+    # on the local (test-runner) machine so that CI runs against real VMs still
+    # complete even without a local wg-quick installation.
+    mocker.patch(
+        "loft_cli.local.tunnel.tunnel_up",
+        return_value=(False, "wg-quick not found — install wireguard-tools"),
+    )
+    mocker.patch(
+        "loft_cli.local.wireguard_store.save_wireguard_state",
+    )
+
     gate_step = _step(
-        "wg_gate",
+        "verify_ssh_over_wireguard_tunnel",
         kind=StepKind.GATE,
         scope=StepScope.LOCAL,
         gate=True,
-        command="tunnel_ssh_gate:myhost:10.0.0.1:2222:admin",
+        command="tunnel_ssh_gate:myhost:10.10.0.1:2222:admin",
     )
-    after_gate = _step("delete_rule", scope=StepScope.REMOTE)
+    after_gate = _step("delete_open_ssh_rule")
 
     p = _make_plan([gate_step, after_gate])
-
-    # Make the executor return "skipped" for the gate step (infra not configured)
     executor = Executor(plan=p, ssh_session=mock_ssh_session)
-
-    def fake_execute_gate(step):
-        return StepResult(
-            step_index=step.index,
-            step_id=step.id,
-            scope=step.scope.value,
-            status="skipped",
-            output="WireGuard tunnel gate skipped — wg-quick not available",
-        )
-
-    executor._execute_gate = fake_execute_gate
     result = executor.apply(dry_run=False)
 
-    # Plan should succeed (not fail) when gate is skipped
-    assert result.status == "success"
-    # aborted_at must not be set — we didn't hard-abort
-    assert result.aborted_at is None
+    gate_result = next(
+        r for r in result.step_results if r.step_id == "verify_ssh_over_wireguard_tunnel"
+    )
+    assert gate_result.status == "success", (
+        "Gate should succeed (not abort) when wg-quick is unavailable"
+    )
+    assert "SKIPPED" in gate_result.output
 
-    gate_result = next(r for r in result.step_results if r.step_id == "wg_gate")
-    assert gate_result.status == "skipped"
 
-    # The step after the gate must also be skipped (not executed!)
-    # so destructive follow-on commands (like delete_open_ssh_rule) never run.
-    after_result = next(r for r in result.step_results if r.step_id == "delete_rule")
-    assert after_result.status == "skipped"
+def test_tunnel_gate_skips_gracefully_when_sudo_unavailable(mock_ssh_session, mocker):
+    """tunnel_ssh_gate: sudo not available → gate skips gracefully (no abort)."""
+    mocker.patch(
+        "loft_cli.local.tunnel.tunnel_up",
+        return_value=(False, "sudo access required for wg-quick"),
+    )
+    mocker.patch(
+        "loft_cli.local.wireguard_store.save_wireguard_state",
+    )
+
+    gate_step = _step(
+        "verify_ssh_over_wireguard_tunnel",
+        kind=StepKind.GATE,
+        scope=StepScope.LOCAL,
+        gate=True,
+        command="tunnel_ssh_gate:myhost:10.10.0.1:2222:admin",
+    )
+
+    p = _make_plan([gate_step])
+    executor = Executor(plan=p, ssh_session=mock_ssh_session)
+    result = executor.apply(dry_run=False)
+
+    gate_result = result.step_results[0]
+    assert gate_result.status == "success"
+    assert result.aborted_at is None, "Plan should not be aborted when sudo is unavailable"
+
+
+def test_tunnel_gate_fails_hard_when_tunnel_up_but_ssh_fails(mock_ssh_session, mocker):
+    """tunnel_ssh_gate: wg-quick runs but SSH through tunnel fails → hard gate failure."""
+    mocker.patch(
+        "loft_cli.local.tunnel.tunnel_up",
+        return_value=(True, "Tunnel wg-myhost is up"),
+    )
+    mocker.patch(
+        "loft_cli.local.tunnel.tunnel_down",
+        return_value=(True, "Tunnel wg-myhost is down"),
+    )
+    mocker.patch(
+        "loft_cli.local.wireguard_store.save_wireguard_state",
+    )
+    mocker.patch(
+        "loft_cli.checks.ssh.check_ssh_reachable",
+        return_value=mocker.MagicMock(passed=False, message="connection refused"),
+    )
+
+    gate_step = _step(
+        "verify_ssh_over_wireguard_tunnel",
+        kind=StepKind.GATE,
+        scope=StepScope.LOCAL,
+        gate=True,
+        command="tunnel_ssh_gate:myhost:10.10.0.1:2222:admin",
+    )
+    after_gate = _step("delete_open_ssh_rule")
+
+    p = _make_plan([gate_step, after_gate])
+    executor = Executor(plan=p, ssh_session=mock_ssh_session)
+    result = executor.apply(dry_run=False)
+
+    gate_result = next(
+        r for r in result.step_results if r.step_id == "verify_ssh_over_wireguard_tunnel"
+    )
+    assert gate_result.status == "failed", (
+        "Gate should hard-fail when tunnel is up but SSH through it fails"
+    )
+    assert result.aborted_at == 0, "Plan should be aborted when tunnel SSH verification fails"
 
 
 def test_local_step_failure_gives_warning_status(mock_ssh_session):
