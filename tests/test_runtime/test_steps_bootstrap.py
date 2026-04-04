@@ -155,9 +155,11 @@ def test_enable_wireguard():
     cmd = enable_wireguard("wg0")
     assert "wg-quick@wg0" in cmd
     assert "enable" in cmd
-    # Must be wrapped in bash -c so Fabric's sudo() elevates the entire
-    # compound command — wg-quick up requires root.
-    assert cmd.startswith("bash -c '")
+    # Must be wrapped in bash -c so Fabric's sudo() elevates the entire chain.
+    # Without wrapping, only the first command in the && chain runs as root.
+    assert cmd.startswith("bash -c '"), (
+        "enable_wireguard must wrap its command in bash -c '...' for Fabric sudo compatibility"
+    )
     assert "wg-quick up wg0" in cmd
 
 
