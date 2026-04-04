@@ -56,7 +56,7 @@ def test_dry_run_all_steps_succeed(mock_ssh_session):
 
 
 def test_gate_failure_aborts_plan(mock_ssh_session, mocker):
-    """When a gate step fails, subsequent steps must be skipped."""
+    """When a REMOTE gate step fails, subsequent steps must be skipped and plan aborts."""
     mock_ssh_session.run.return_value = mocker.MagicMock(
         ok=False, stdout="", stderr="timeout", return_code=1
     )
@@ -80,6 +80,46 @@ def test_gate_failure_aborts_plan(mock_ssh_session, mocker):
 
     gate_result = next(r for r in result.step_results if r.step_id == "gate")
     assert gate_result.status == "failed"
+
+
+def test_local_gate_failure_gives_warning_not_abort(mock_ssh_session, mocker):
+    """When a LOCAL gate step fails, plan should not abort — status is success_with_local_warnings
+    and steps that depend on the gate are skipped via depends_on."""
+    # step 0: preflight (succeeds)
+    preflight = _step("preflight", scope=StepScope.REMOTE, kind=StepKind.SSH_COMMAND)
+    # step 1: WireGuard tunnel gate (LOCAL, fails)
+    gate_step = _step(
+        "wg_gate",
+        kind=StepKind.GATE,
+        scope=StepScope.LOCAL,
+        gate=True,
+        command="tunnel_ssh_gate:myhost:10.0.0.1:2222:deploy",
+    )
+    # step 2: delete_open_ssh_rule depends on the gate — should be skipped on gate failure
+    dependent_step = _step("delete_open_ssh_rule", scope=StepScope.REMOTE, depends_on=[1])
+    # step 3: local step with no dependency on gate — should still run
+    local_step = _step("write_ssh_config", scope=StepScope.LOCAL, kind=StepKind.LOCAL_COMMAND)
+
+    p = _make_plan([preflight, gate_step, dependent_step, local_step])
+
+    # Mock tunnel_up to fail (simulates wg-quick not available / tunnel fails)
+    mocker.patch(
+        "loft_cli.local.tunnel.tunnel_up",
+        return_value=(False, "wg-quick: command not found"),
+    )
+    mocker.patch("loft_cli.local.wireguard_store.save_wireguard_state")
+
+    executor = Executor(plan=p, ssh_session=mock_ssh_session)
+    result = executor.apply(dry_run=False)
+
+    assert result.status == "success_with_local_warnings"
+    assert result.aborted_at is None
+
+    gate_result = next(r for r in result.step_results if r.step_id == "wg_gate")
+    assert gate_result.status == "failed"
+
+    dep_result = next(r for r in result.step_results if r.step_id == "delete_open_ssh_rule")
+    assert dep_result.status == "skipped"
 
 
 def test_dependency_failure_skips_dependent(mock_ssh_session, mocker):

@@ -156,13 +156,25 @@ class Executor:
                     aborted_at = step.index
                     break
                 elif step.gate:
-                    aborted_at = step.index
-                    self._console.print(
-                        f"\n[bold red]⛔ GATE FAILED at step {step.index}: {step.id}[/bold red]"
-                    )
-                    if step.rollback_hint:
-                        self._console.print(f"[yellow]Recovery:[/yellow] {step.rollback_hint}")
-                    break
+                    if step.scope == StepScope.LOCAL:
+                        # A LOCAL gate failure (e.g. WireGuard tunnel verification) is
+                        # non-fatal: steps that depend on this gate are skipped via the
+                        # depends_on mechanism, but the plan continues and finishes with
+                        # success_with_local_warnings rather than aborting with exit_code 1.
+                        local_warnings = True
+                        self._console.print(
+                            f"\n[bold yellow]⚠ LOCAL GATE failed at step {step.index}: {step.id}[/bold yellow]"
+                        )
+                        if step.rollback_hint:
+                            self._console.print(f"[yellow]Recovery:[/yellow] {step.rollback_hint}")
+                    else:
+                        aborted_at = step.index
+                        self._console.print(
+                            f"\n[bold red]⛔ GATE FAILED at step {step.index}: {step.id}[/bold red]"
+                        )
+                        if step.rollback_hint:
+                            self._console.print(f"[yellow]Recovery:[/yellow] {step.rollback_hint}")
+                        break
                 elif step.scope == StepScope.LOCAL:
                     local_warnings = True
                 else:

@@ -217,6 +217,17 @@ class TestWireGuardTunnelGate:
             f"gate ({gate.index}) must come before delete ({delete.index})"
         )
 
+    def test_delete_open_ssh_rule_depends_on_wg_gate(self, tmp_path):
+        """delete_open_ssh_rule must declare depends_on the WireGuard gate so it is
+        skipped (not executed) when the gate fails, rather than requiring plan abort."""
+        p = _make_wg_plan(tmp_path)
+        gate = next(s for s in p.steps if s.id == "verify_ssh_over_wireguard_tunnel")
+        delete = next(s for s in p.steps if s.id == "delete_open_ssh_rule")
+        assert gate.index in delete.depends_on, (
+            f"delete_open_ssh_rule.depends_on should include gate index {gate.index}, "
+            f"got {delete.depends_on}"
+        )
+
     def test_no_wg_steps_without_wireguard(self, tmp_path):
         p = _make_nowg_plan(tmp_path)
         wg_step_ids = {

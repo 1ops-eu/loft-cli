@@ -712,17 +712,19 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
                     tags=["wireguard", "ssh", "gate", "tunnel"],
                 )
             )
+        )
+        idx_wg_gate = len(steps) - 1
 
-            steps.append(
-                _s(
-                    "delete_open_ssh_rule",
-                    f"Remove open-to-all SSH rule for port {spec.ssh.port}/tcp",
-                    R,
-                    StepKind.SSH_COMMAND,
-                    command=bs.delete_open_ssh_rule(spec.ssh.port),
-                    sudo=True,
-                    tags=["ssh", "firewall", "wireguard"],
-                )
+        steps.append(
+            _s(
+                "delete_open_ssh_rule",
+                f"Remove open-to-all SSH rule for port {spec.ssh.port}/tcp",
+                R,
+                StepKind.SSH_COMMAND,
+                command=bs.delete_open_ssh_rule(spec.ssh.port),
+                sudo=True,
+                depends_on=[idx_wg_gate],
+                tags=["ssh", "firewall", "wireguard"],
             )
 
     # ------------------------------------------------------------------ #
