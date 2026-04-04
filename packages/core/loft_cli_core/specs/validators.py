@@ -137,6 +137,18 @@ def validate_bootstrap(spec: BootstrapSpec) -> list[ValidationIssue]:
             )
         )
 
+    # Host provider check
+    _known_providers = ("hetzner", "digitalocean", "aws", "gcp", "azure", "vultr", "linode")
+    if spec.host.provider is not None and spec.host.provider not in _known_providers:
+        issues.append(
+            ValidationIssue(
+                "warning",
+                "host.provider",
+                f"Unknown provider '{spec.host.provider}'; "
+                f"known providers: {', '.join(_known_providers)}",
+            )
+        )
+
     return issues
 
 
