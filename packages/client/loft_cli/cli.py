@@ -367,6 +367,10 @@ def doctor(
     Generates a plan from the spec, sends it to the agent's doctor
     command, and displays which resources have drifted, are missing,
     or are orphaned.
+
+    If the agent is not yet installed on the target server, this command
+    will attempt to install it automatically using the local loft-cli-agent
+    binary before running the doctor check.
     """
     from loft_cli.agent_installer import detect_agent
     from loft_cli.runtime.fabric_transport import FabricTransport
@@ -398,12 +402,28 @@ def doctor(
 
         agent_version = detect_agent(transport)
         if not agent_version:
+            # Agent is not installed — attempt auto-install from local binary
             console.print(
-                "[bold red]No agent installed on the target server.[/bold red]\n"
-                "Install the agent first: loft-cli apply <spec.yaml>"
+                "[yellow]Agent not found on target server — attempting automatic install...[/yellow]"
             )
-            transport.close()
-            raise typer.Exit(1)
+            from loft_cli.updater import update_agent
+
+            installed = update_agent(transport, console=console)
+            if not installed:
+                console.print(
+                    "[bold red]No agent installed on the target server and auto-install failed.[/bold red]\n"
+                    "Install the agent first: loft-cli agent-update <host>"
+                )
+                transport.close()
+                raise typer.Exit(1)
+            agent_version = detect_agent(transport)
+            if not agent_version:
+                console.print(
+                    "[bold red]Agent was installed but could not be detected.[/bold red]\n"
+                    "Try running: loft-cli agent-update <host>"
+                )
+                transport.close()
+                raise typer.Exit(1)
 
         # Upload the current plan as the desired state
         from loft_cli_core.agent_paths import AGENT_BINARY_PATH, AGENT_DESIRED_DIR
