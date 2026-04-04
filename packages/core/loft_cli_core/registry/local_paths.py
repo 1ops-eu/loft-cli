@@ -63,7 +63,7 @@ def _default_state_dir() -> Path | None:
     """Read LOFT_CLI_STATE_DIR from environment, or return None."""
     val = os.environ.get("LOFT_CLI_STATE_DIR")
     if val:
-        return Path(val)
+        return Path(val).expanduser()
     return None
 
 

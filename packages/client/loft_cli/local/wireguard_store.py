@@ -33,7 +33,7 @@ def _wg_host_dir(provider: str | None, host_name: str) -> Path:
     """Return the per-host WireGuard state directory (not yet created)."""
     from loft_cli_core.registry.local_paths import get_local_paths
 
-    return get_local_paths().wg_state_base / (provider + "/" if provider else "") + host_name
+    return get_local_paths().wg_state_base.expanduser() / host_name
 
 
 def save_wireguard_state(

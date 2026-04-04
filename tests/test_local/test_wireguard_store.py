@@ -126,6 +126,33 @@ def test_client_key_not_overwritten_on_rerun(tmp_path):
     assert _CLIENT_PRIVATE_KEY in (host_dir / "client.key").read_text()
 
 
+def test_server_private_key_not_overwritten_on_rerun(tmp_path):
+    """private.key must survive re-runs (stable server identity — same failure class as #37)."""
+    _save(tmp_path)
+    # Second call with a *different* private key — write-once must protect the original
+    save_wireguard_state(
+        host_name="ubuntu-node-1",
+        spec_name="ubuntu-05-wireguard",
+        private_key="DIFFERENTKEY+differentkey+differentkey+di=",
+        public_key=_SERVER_PUBLIC_KEY,
+        wg_conf_content=_SERVER_CONF,
+        client_private_key=_CLIENT_PRIVATE_KEY,
+        client_public_key=_CLIENT_PUBLIC_KEY,
+        client_conf_content=_CLIENT_CONF,
+        interface="wg0",
+        address="10.10.0.1/24",
+        endpoint="192.168.56.10:51820",
+        peer_address="10.10.0.2/32",
+        persistent_keepalive=25,
+    )
+    from loft_cli_core.registry.local_paths import get_local_paths
+
+    host_dir = get_local_paths().wg_state_base / "ubuntu-node-1"
+    # Original key must still be present — not the replacement
+    assert _SERVER_PRIVATE_KEY in (host_dir / "private.key").read_text()
+    assert "DIFFERENTKEY" not in (host_dir / "private.key").read_text()
+
+
 def test_metadata_json_fields(tmp_path):
     host_dir = _save(tmp_path)
     meta = json.loads((host_dir / "metadata.json").read_text())

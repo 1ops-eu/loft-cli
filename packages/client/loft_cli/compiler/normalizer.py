@@ -138,7 +138,7 @@ def _apply_state_dir(spec) -> None:
 
     effective = env_state_dir or spec_state_dir
     if effective:
-        register_local_paths(LocalPathsConfig(state_dir=Path(effective)))
+        register_local_paths(LocalPathsConfig(state_dir=Path(effective).expanduser()))
 
 
 def _resolve_db_path(spec) -> Path:

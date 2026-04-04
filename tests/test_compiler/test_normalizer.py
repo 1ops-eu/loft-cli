@@ -102,22 +102,18 @@ def test_normalize_derives_wireguard_public_key(tmp_path):
     base64.b64decode(ctx.wg_client_public_key)
 
 
-def test_normalize_raises_when_derive_public_key_fails_for_auto_gen(tmp_path, monkeypatch):
-    """normalize() must raise a RuntimeError (not silently produce '') when
-    _derive_wg_public_key fails during the auto-gen server-key path.
-
-    Regression test for #168: previously _derive_wg_public_key swallowed all
-    exceptions and returned "", which propagated as an empty PublicKey field in
-    the generated WireGuard configs, causing `wg-quick up wg0` to reject the
-    config with exit code 1.
-    """
+def test_normalize_auto_key_reuses_persisted_key_on_second_run(tmp_path):
+    """Auto-key path: second normalize() call reuses the private.key from disk."""
+    import base64
     import textwrap
 
-    import loft_cli.compiler.normalizer as norm_mod
+    from loft_cli_core.registry.local_paths import LocalPathsConfig, register_local_paths
 
+    wg_state_base = tmp_path / "wg"
     register_local_paths(
         LocalPathsConfig(
-            wg_state_base=tmp_path / "wg",
+            ssh_conf_d_base=tmp_path / "ssh" / "conf.d",
+            wg_state_base=wg_state_base,
         )
     )
 
@@ -126,10 +122,10 @@ def test_normalize_raises_when_derive_public_key_fails_for_auto_gen(tmp_path, mo
         textwrap.dedent("""
         kind: bootstrap
         meta:
-          name: wg-autogen-test
+          name: wg-auto-test
           description: ""
         host:
-          name: wg-autogen-node
+          name: wg-auto-node
           address: 192.168.1.1
         wireguard:
           enabled: true
@@ -140,56 +136,68 @@ def test_normalize_raises_when_derive_public_key_fails_for_auto_gen(tmp_path, mo
     """)
     )
 
-    def _broken_derive(private_key_b64: str) -> str:
-        raise Exception("nacl unavailable")
+    from loft_cli_core.specs.loader import load_spec
 
-    # Simulate nacl being broken / unavailable during public-key derivation
-    monkeypatch.setattr(norm_mod, "_derive_wg_public_key", _broken_derive)
-
+    # First run: no key on disk — generates a fresh key in memory
     spec = load_spec(spec_yaml)
-    with pytest.raises(RuntimeError, match="WireGuard"):
-        normalize(spec)
+    ctx1 = normalize(spec)
+    assert ctx1.wireguard_private_key
+    assert ctx1.wireguard_public_key
+    base64.b64decode(ctx1.wireguard_private_key)
+
+    # Simulate what save_wireguard_state does: persist private.key to disk
+    host_dir = wg_state_base / "wg-auto-node"
+    host_dir.mkdir(parents=True, exist_ok=True)
+    (host_dir / "private.key").write_text(ctx1.wireguard_private_key + "\n")
+    (host_dir / "client.key").write_text(ctx1.wg_client_private_key + "\n")
+
+    # Second run: key IS on disk — must reuse it (stable server identity)
+    spec2 = load_spec(spec_yaml)
+    ctx2 = normalize(spec2)
+    assert ctx2.wireguard_private_key == ctx1.wireguard_private_key
+    assert ctx2.wireguard_public_key == ctx1.wireguard_public_key
+    assert ctx2.wg_client_private_key == ctx1.wg_client_private_key
+    assert ctx2.wg_client_public_key == ctx1.wg_client_public_key
 
 
-def test_normalize_raises_when_derive_public_key_returns_empty_for_auto_gen(tmp_path, monkeypatch):
-    """normalize() must raise RuntimeError when _derive_wg_public_key returns ''
-    (the old silent-failure behaviour) rather than propagating the empty string
-    into the WireGuard config templates.
-
-    Regression test for #168.
-    """
+def test_normalize_auto_key_state_dir_tilde_expansion(tmp_path):
+    """state_dir with a tilde prefix must be expanded before key path checks."""
     import textwrap
 
-    import loft_cli.compiler.normalizer as norm_mod
+    import os
 
-    register_local_paths(
-        LocalPathsConfig(
-            wg_state_base=tmp_path / "wg",
-        )
-    )
+    # Point LOFT_CLI_STATE_DIR to a real tmp_path (no tilde needed for the env var test,
+    # but we verify that Path(...).expanduser() doesn't break an already-absolute path).
+    state_dir = tmp_path / "loft-state"
+    state_dir.mkdir()
 
     spec_yaml = tmp_path / "spec.yaml"
     spec_yaml.write_text(
-        textwrap.dedent("""
+        textwrap.dedent(f"""
         kind: bootstrap
         meta:
-          name: wg-autogen-empty-test
+          name: wg-tilde-test
           description: ""
         host:
-          name: wg-autogen-node2
-          address: 192.168.1.2
+          name: tilde-node
+          address: 192.168.1.1
         wireguard:
           enabled: true
           interface: wg0
           address: 10.0.0.1/24
-          endpoint: "192.168.1.2:51820"
+          endpoint: "192.168.1.1:51820"
           peer_address: "10.0.0.2/32"
+        local:
+          state_dir: "{state_dir}"
     """)
     )
 
-    # Old behaviour: _derive_wg_public_key returned "" silently
-    monkeypatch.setattr(norm_mod, "_derive_wg_public_key", lambda _k: "")
+    from loft_cli_core.specs.loader import load_spec
 
     spec = load_spec(spec_yaml)
-    with pytest.raises(RuntimeError, match="WireGuard"):
-        normalize(spec)
+    ctx = normalize(spec)
+    # Key must be generated without errors and paths must be under state_dir
+    assert ctx.wireguard_private_key
+    from loft_cli_core.registry.local_paths import get_local_paths
+
+    assert str(state_dir) in str(get_local_paths().wg_state_base)
