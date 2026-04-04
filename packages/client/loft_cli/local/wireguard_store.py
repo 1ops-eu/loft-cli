@@ -135,6 +135,46 @@ def save_wireguard_state(
     return host_dir
 
 
+def persist_wireguard_keys(
+    *,
+    host_name: str,
+    private_key: str,
+    client_private_key: str,
+) -> None:
+    """Eagerly persist auto-generated WireGuard key material to disk.
+
+    Called by the normalizer immediately after generating fresh keys so that the
+    server and client identities survive even if the subsequent ``apply`` is
+    aborted before ``save_wireguard_state`` is reached (e.g. the tunnel-safety
+    gate fails and the LOCAL ``save_local_wireguard_state`` step is skipped).
+
+    Uses write-once semantics identical to ``save_wireguard_state``:
+
+    * If the file already exists it is **not** overwritten — callers that
+      loaded an existing key from disk will therefore never change it.
+    * The parent directory is created with mode ``0o700`` if absent.
+
+    Parameters
+    ----------
+    host_name:
+        Value of ``spec.host.name`` — used as the directory name.
+    private_key:
+        Base64-encoded Curve25519 server private key.
+    client_private_key:
+        Base64-encoded Curve25519 client private key.
+    """
+    host_dir = _wg_host_dir(host_name)
+    ensure_dir(host_dir, mode=0o700)
+
+    server_key_path = host_dir / "private.key"
+    if not server_key_path.exists():
+        _write(server_key_path, private_key + "\n", mode=0o600)
+
+    client_key_path = host_dir / "client.key"
+    if not client_key_path.exists():
+        _write(client_key_path, client_private_key + "\n", mode=0o600)
+
+
 def _write(path: Path, content: str, mode: int) -> None:
     path.write_text(content, encoding="utf-8")
     path.chmod(mode)

@@ -14,9 +14,12 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from loft_cli.compiler.normalizer import normalize
 from loft_cli.compiler.planner import plan
 from loft_cli_core.plan.models import StepKind, StepScope
+from loft_cli_core.registry.local_paths import LocalPathsConfig, register_local_paths
 from loft_cli_core.specs.loader import load_spec
 
 
@@ -64,6 +67,7 @@ def _make_wg_plan(tmp_path: Path):
     spec_file = tmp_path / "wg-bootstrap.yaml"
     spec_file.write_text(spec_yaml)
 
+    register_local_paths(LocalPathsConfig(wg_state_base=tmp_path / "wg"))
     spec = load_spec(spec_file)
     ctx = normalize(spec, spec_dir=tmp_path)
     return plan(ctx)
@@ -115,6 +119,11 @@ def _make_nowg_plan(tmp_path: Path):
 
 class TestWireGuardTunnelGate:
     """Tests for the verify_ssh_over_wireguard_tunnel gate step."""
+
+    @pytest.fixture(autouse=True)
+    def restore_local_paths(self):
+        yield
+        register_local_paths(LocalPathsConfig())
 
     def test_gate_present_when_wg_enabled(self, tmp_path):
         p = _make_wg_plan(tmp_path)
@@ -173,12 +182,12 @@ class TestWireGuardTunnelGate:
         gate = next(s for s in p.steps if s.id == "verify_ssh_over_wireguard_tunnel")
         delete = next(s for s in p.steps if s.id == "delete_open_ssh_rule")
 
-        assert (
-            allow.index < gate.index
-        ), f"allow ({allow.index}) must come before gate ({gate.index})"
-        assert (
-            gate.index < delete.index
-        ), f"gate ({gate.index}) must come before delete ({delete.index})"
+        assert allow.index < gate.index, (
+            f"allow ({allow.index}) must come before gate ({gate.index})"
+        )
+        assert gate.index < delete.index, (
+            f"gate ({gate.index}) must come before delete ({delete.index})"
+        )
 
     def test_no_wg_steps_without_wireguard(self, tmp_path):
         p = _make_nowg_plan(tmp_path)

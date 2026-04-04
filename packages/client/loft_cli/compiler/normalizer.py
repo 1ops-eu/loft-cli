@@ -222,6 +222,21 @@ def _normalize_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> None:
             ctx.wg_client_private_key = _generate_wg_private_key()
         ctx.wg_client_public_key = _derive_wg_public_key(ctx.wg_client_private_key)
 
+    # Eagerly persist auto-generated keys to disk so they survive an aborted apply
+    # (e.g. the tunnel-safety gate fails before save_local_wireguard_state runs).
+    # persist_wireguard_keys uses write-once semantics — already-persisted keys are
+    # never overwritten.  We only call this for the auto-key path (no private_key_file)
+    # because the explicit-file path reads keys from a user-owned file that we must
+    # not touch.
+    if spec.wireguard.enabled and not spec.wireguard.private_key_file:
+        from loft_cli.local.wireguard_store import persist_wireguard_keys
+
+        persist_wireguard_keys(
+            host_name=spec.host.name,
+            private_key=ctx.wireguard_private_key,
+            client_private_key=ctx.wg_client_private_key,
+        )
+
     # Compute SSH conf.d path   using the addon-overridable base directory
     from loft_cli_core.registry.local_paths import get_local_paths
 
