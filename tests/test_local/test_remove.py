@@ -43,9 +43,7 @@ def _setup_ssh_conf(tmp_path, host_name="testhost"):
     conf_dir = get_local_paths().ssh_conf_d_base
     conf_dir.mkdir(parents=True, exist_ok=True)
     conf_file = conf_dir / f"{host_name}.conf"
-    conf_file.write_text(
-        f"# loft-cli managed: {host_name}\nHost {host_name}\n  HostName 1.2.3.4\n"
-    )
+    conf_file.write_text(f"# loft-cli managed: {host_name}\nHost {host_name}\n  HostName 1.2.3.4\n")
     return conf_file
 
 
