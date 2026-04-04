@@ -806,7 +806,6 @@ class Executor:
                 endpoint=spec.wireguard.endpoint,
                 peer_address=spec.wireguard.peer_address,
                 persistent_keepalive=spec.wireguard.persistent_keepalive,
-                provider=getattr(spec.host, "provider", ""),
             )
             return StepResult(
                 step_index=step.index,

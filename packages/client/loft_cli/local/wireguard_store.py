@@ -98,7 +98,6 @@ def save_wireguard_state(
     endpoint: str,
     peer_address: str,
     persistent_keepalive: int,
-    provider: str = "",
 ) -> Path:
     """Persist WireGuard key material and config for one host.
 
