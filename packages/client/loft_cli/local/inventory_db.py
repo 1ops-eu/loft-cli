@@ -112,7 +112,7 @@ class InventoryDB:
         name: str,
         address: str,
         bootstrap_status: str,
-        provider: str | None = None,
+        provider: str = "",
         os_family: str = "",
         ssh_alias: str = "",
         ssh_host: str = "",
@@ -133,16 +133,17 @@ class InventoryDB:
         self._conn.execute(
             """
             INSERT INTO vv_server (
-                id, name, address, os_family, bootstrap_status,
+                id, name, address, provider, os_family, bootstrap_status,
                 ssh_alias, ssh_host, ssh_user, ssh_port, ssh_identity_file,
                 wireguard_enabled, wireguard_interface, wireguard_address,
                 version_changed_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 server_id,
                 name,
                 address,
+                provider,
                 os_family,
                 bootstrap_status,
                 ssh_alias,

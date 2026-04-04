@@ -154,33 +154,34 @@ def get_local_paths() -> LocalPathsConfig:
     return _config
 
 
-def ssh_key_dir(provider: str, host: str) -> Path:
-    """Return the provider-scoped SSH key directory.
+def provider_ssh_conf_d_base(provider: str, config: LocalPathsConfig | None = None) -> Path:
+    """Return the SSH conf.d base directory namespaced under a provider.
 
-    Example: ~/.loft-cli/keys/{provider}/{host}/
+    When ``provider`` is non-empty, fragments are stored in a subdirectory
+    named after the provider so that keys from different cloud providers do
+    not collide:
+
+        {ssh_conf_d_base}/{provider}/  (e.g. ~/.ssh/conf.d/loft-cli/hetzner/)
+
+    When ``provider`` is empty the base directory itself is returned
+    (backward-compatible behaviour).
     """
-    return get_local_paths().keys_base / provider / host
-
-
-def _ssh_conf_d_base(provider: str | None = None) -> Path:
-    """Return the SSH conf.d base directory, optionally with provider scope.
-
-    When provider is set, returns {base}/{provider}/
-    """
-    base = get_local_paths().ssh_conf_d_base
+    base = (config or _config).ssh_conf_d_base
     if provider:
         return base / provider
     return base
 
 
-def _wg_host_dir(provider: str | None = None, host: str | None = None) -> Path:
-    """Return the WireGuard host directory, optionally provider-scoped.
+def provider_wg_state_base(provider: str, config: LocalPathsConfig | None = None) -> Path:
+    """Return the WireGuard state base directory namespaced under a provider.
 
-    When provider is set, returns {base}/{provider}/{host}/
+    When ``provider`` is non-empty, WG key material is stored under:
+
+        {wg_state_base}/{provider}/  (e.g. ~/.wg/loft-cli/hetzner/)
+
+    When ``provider`` is empty the base directory itself is returned.
     """
-    base = get_local_paths().wg_state_base
-    if provider and host:
-        return base / provider / host
-    elif host:
-        return base / host
+    base = (config or _config).wg_state_base
+    if provider:
+        return base / provider
     return base

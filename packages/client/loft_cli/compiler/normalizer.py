@@ -204,9 +204,10 @@ def _normalize_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> None:
                 ctx.wireguard_public_key = ""
         else:
             # Auto-generate: reuse persisted key or generate fresh (write-once)
-            from loft_cli_core.registry.local_paths import get_local_paths
+            from loft_cli_core.registry.local_paths import get_local_paths, provider_wg_state_base
 
-            server_key_path = get_local_paths().wg_state_base / spec.host.name / "private.key"
+            wg_base = provider_wg_state_base(spec.host.provider, get_local_paths())
+            server_key_path = wg_base / spec.host.name / "private.key"
             if server_key_path.exists():
                 ctx.wireguard_private_key = server_key_path.read_text(encoding="utf-8").strip()
             else:
@@ -230,9 +231,10 @@ def _normalize_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> None:
     # On first run the file won't exist yet — we generate it in memory here and the
     # executor's save_wireguard_state step writes it to disk.
     if spec.wireguard.enabled:
-        from loft_cli_core.registry.local_paths import get_local_paths
+        from loft_cli_core.registry.local_paths import get_local_paths, provider_wg_state_base
 
-        client_key_path = get_local_paths().wg_state_base / spec.host.name / "client.key"
+        wg_base = provider_wg_state_base(spec.host.provider, get_local_paths())
+        client_key_path = wg_base / spec.host.name / "client.key"
         if client_key_path.exists():
             ctx.wg_client_private_key = client_key_path.read_text(encoding="utf-8").strip()
         else:
@@ -266,9 +268,10 @@ def _normalize_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> None:
         )
 
     # Compute SSH conf.d path   using the addon-overridable base directory
-    from loft_cli_core.registry.local_paths import get_local_paths
+    from loft_cli_core.registry.local_paths import get_local_paths, provider_ssh_conf_d_base
 
-    ssh_conf_d_base = get_local_paths().ssh_conf_d_base
+    provider = spec.host.provider
+    ssh_conf_d_base = provider_ssh_conf_d_base(provider, get_local_paths())
     ctx.ssh_conf_d_path = ssh_conf_d_base / f"{spec.host.name}.conf"
 
     # If host_alias not set, default to host name

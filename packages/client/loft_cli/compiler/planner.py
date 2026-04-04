@@ -764,10 +764,16 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
 
     # WireGuard local state — save key material + metadata after remote success
     if spec.wireguard.enabled:
+        _provider = getattr(spec.host, "provider", "")
+        _wg_path = (
+            f"~/.wg/loft-cli/{_provider}/{spec.host.name}/"
+            if _provider
+            else f"~/.wg/loft-cli/{spec.host.name}/"
+        )
         steps.append(
             _s(
                 "save_local_wireguard_state",
-                f"Save WireGuard state to ~/.wg/loft-cli/{spec.host.name}/",
+                f"Save WireGuard state to {_wg_path}",
                 L,
                 StepKind.LOCAL_COMMAND,
                 command="save_wireguard_state",
