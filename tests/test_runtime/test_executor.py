@@ -47,7 +47,7 @@ def test_dry_run_all_steps_succeed(mock_ssh_session):
         _step("step_c"),
     ]
     p = _make_plan(steps)
-    executor = Executor(plan=p, ssh_session=mock_ssh_session)
+    executor = Executor(plan=p, transport=mock_ssh_session)
     result = executor.apply(dry_run=True)
 
     assert result.status == "success"
@@ -72,7 +72,7 @@ def test_gate_failure_aborts_plan(mock_ssh_session, mocker):
         return_value=mocker.MagicMock(passed=False, message="connection refused"),
     )
 
-    executor = Executor(plan=p, ssh_session=mock_ssh_session)
+    executor = Executor(plan=p, transport=mock_ssh_session)
     result = executor.apply(dry_run=False)
 
     assert result.status == "failed"
@@ -136,7 +136,7 @@ def test_dependency_failure_skips_dependent(mock_ssh_session, mocker):
     step_b = _step("step_b", depends_on=[1])  # depends on step_a (index 1)
 
     p = _make_plan([preflight, step_a, step_b])
-    executor = Executor(plan=p, ssh_session=mock_ssh_session)
+    executor = Executor(plan=p, transport=mock_ssh_session)
     result = executor.apply(dry_run=False)
 
     result_b = next(r for r in result.step_results if r.step_id == "step_b")
@@ -257,7 +257,7 @@ def test_local_step_failure_gives_warning_status(mock_ssh_session):
 
     p = _make_plan([remote_step, local_step])
 
-    executor = Executor(plan=p, ssh_session=mock_ssh_session)
+    executor = Executor(plan=p, transport=mock_ssh_session)
     # Make local command raise an exception
 
     def fail_local(step):
