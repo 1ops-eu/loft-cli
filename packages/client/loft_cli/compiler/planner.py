@@ -645,8 +645,9 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
 
     # ------------------------------------------------------------------ #
     # WireGuard SSH restriction — MUST be the absolute last remote steps.
-    # Adds a WireGuard-restricted SSH rule, verifies SSH through the tunnel
-    # from the client side, then removes the open-to-all rule.
+    # Adds a WireGuard-restricted SSH rule. When registered_peers_only=true,
+    # also verifies SSH through the tunnel from the client side before removing
+    # the open-to-all rule (lockout protection).
     # After delete_open_ssh_rule executes, direct SSH to spec.host.address
     # stops working.
     # ------------------------------------------------------------------ #
@@ -679,46 +680,50 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
             )
         )
 
-        # Tunnel safety gate: bring up WireGuard tunnel locally, verify SSH
-        # through the VPN IP, and only then proceed to delete the open SSH rule.
-        # If this gate fails, the open SSH rule is NOT deleted — the server
-        # remains accessible via public IP.
-        wg_server_vpn_ip = str(_ip_wg.ip_interface(spec.wireguard.address).ip)
-        steps.append(
-            _s(
-                "verify_ssh_over_wireguard_tunnel",
-                (
-                    f"Verify SSH through WireGuard tunnel "
-                    f"({spec.admin_user.name}@{wg_server_vpn_ip}:{spec.ssh.port})"
-                ),
-                L,
-                StepKind.GATE,
-                command=(
-                    f"tunnel_ssh_gate:{spec.host.name}:{wg_server_vpn_ip}"
-                    f":{spec.ssh.port}:{spec.admin_user.name}"
-                ),
-                gate=True,
-                rollback_hint=(
-                    "WireGuard tunnel SSH verification failed. The open SSH rule was NOT deleted — "
-                    "the server is still accessible via its public IP. "
-                    "Check WireGuard configuration, ensure wg-quick is installed locally, "
-                    "and verify the tunnel can be established."
-                ),
-                tags=["wireguard", "ssh", "gate", "tunnel"],
+        # Tunnel safety gate + open-rule deletion are only needed when
+        # registered_peers_only=true. In that mode SSH is locked to a single
+        # peer IP so a failed tunnel means permanent lockout. The gate verifies
+        # the tunnel works before deleting the open rule.
+        # When registered_peers_only=false, SSH is allowed on the WireGuard
+        # interface from any IP — no lockout risk, so neither the gate nor the
+        # open-rule deletion is emitted.
+        if spec.firewall.registered_peers_only:
+            wg_server_vpn_ip = str(_ip_wg.ip_interface(spec.wireguard.address).ip)
+            steps.append(
+                _s(
+                    "verify_ssh_over_wireguard_tunnel",
+                    (
+                        f"Verify SSH through WireGuard tunnel "
+                        f"({spec.admin_user.name}@{wg_server_vpn_ip}:{spec.ssh.port})"
+                    ),
+                    L,
+                    StepKind.GATE,
+                    command=(
+                        f"tunnel_ssh_gate:{spec.host.name}:{wg_server_vpn_ip}"
+                        f":{spec.ssh.port}:{spec.admin_user.name}"
+                    ),
+                    gate=True,
+                    rollback_hint=(
+                        "WireGuard tunnel SSH verification failed. The open SSH rule was NOT deleted — "
+                        "the server is still accessible via its public IP. "
+                        "Check WireGuard configuration, ensure wg-quick is installed locally, "
+                        "and verify the tunnel can be established."
+                    ),
+                    tags=["wireguard", "ssh", "gate", "tunnel"],
+                )
             )
-        )
 
-        steps.append(
-            _s(
-                "delete_open_ssh_rule",
-                f"Remove open-to-all SSH rule for port {spec.ssh.port}/tcp",
-                R,
-                StepKind.SSH_COMMAND,
-                command=bs.delete_open_ssh_rule(spec.ssh.port),
-                sudo=True,
-                tags=["ssh", "firewall", "wireguard"],
+            steps.append(
+                _s(
+                    "delete_open_ssh_rule",
+                    f"Remove open-to-all SSH rule for port {spec.ssh.port}/tcp",
+                    R,
+                    StepKind.SSH_COMMAND,
+                    command=bs.delete_open_ssh_rule(spec.ssh.port),
+                    sudo=True,
+                    tags=["ssh", "firewall", "wireguard"],
+                )
             )
-        )
 
     # ------------------------------------------------------------------ #
     # LOCAL: only after remote success

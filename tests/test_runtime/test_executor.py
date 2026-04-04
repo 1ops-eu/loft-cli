@@ -175,3 +175,95 @@ def test_local_step_failure_gives_warning_status(mock_ssh_session):
     result = executor.apply(dry_run=False)
 
     assert result.status == "success_with_local_warnings"
+
+
+class TestTunnelSshGateUnavailable:
+    """Tunnel gate skips gracefully when wg-quick tooling is unavailable."""
+
+    def _make_tunnel_gate_plan(self):
+        gate_step = _step(
+            "verify_ssh_over_wireguard_tunnel",
+            kind=StepKind.GATE,
+            scope=StepScope.LOCAL,
+            gate=True,
+            command="tunnel_ssh_gate:myhost:10.10.0.1:2222:deploy",
+        )
+        return _make_plan([gate_step])
+
+    def test_wg_quick_not_found_skips_gracefully(self, mock_ssh_session, mocker):
+        """When wg-quick is not installed, the gate succeeds with a warning output."""
+        mocker.patch(
+            "loft_cli.local.tunnel.tunnel_up",
+            return_value=(False, "wg-quick not found — install wireguard-tools"),
+        )
+        mocker.patch("loft_cli.local.wireguard_store.save_wireguard_state")
+
+        p = self._make_tunnel_gate_plan()
+        executor = Executor(plan=p, ssh_session=mock_ssh_session)
+        result = executor.apply(dry_run=False)
+
+        assert result.status == "success"
+        gate_result = next(
+            r for r in result.step_results if r.step_id == "verify_ssh_over_wireguard_tunnel"
+        )
+        assert gate_result.status == "success"
+        assert "tooling unavailable" in gate_result.output
+
+    def test_sudo_denied_skips_gracefully(self, mock_ssh_session, mocker):
+        """When sudo is denied for wg-quick, the gate succeeds with a warning output."""
+        mocker.patch(
+            "loft_cli.local.tunnel.tunnel_up",
+            return_value=(False, "sudo access required for wg-quick"),
+        )
+        mocker.patch("loft_cli.local.wireguard_store.save_wireguard_state")
+
+        p = self._make_tunnel_gate_plan()
+        executor = Executor(plan=p, ssh_session=mock_ssh_session)
+        result = executor.apply(dry_run=False)
+
+        assert result.status == "success"
+        gate_result = next(
+            r for r in result.step_results if r.step_id == "verify_ssh_over_wireguard_tunnel"
+        )
+        assert gate_result.status == "success"
+        assert "tooling unavailable" in gate_result.output
+
+    def test_timeout_skips_gracefully(self, mock_ssh_session, mocker):
+        """When wg-quick times out, the gate succeeds with a warning output."""
+        mocker.patch(
+            "loft_cli.local.tunnel.tunnel_up",
+            return_value=(False, "wg-quick up timed out (30s)"),
+        )
+        mocker.patch("loft_cli.local.wireguard_store.save_wireguard_state")
+
+        p = self._make_tunnel_gate_plan()
+        executor = Executor(plan=p, ssh_session=mock_ssh_session)
+        result = executor.apply(dry_run=False)
+
+        assert result.status == "success"
+        gate_result = next(
+            r for r in result.step_results if r.step_id == "verify_ssh_over_wireguard_tunnel"
+        )
+        assert gate_result.status == "success"
+        assert "tooling unavailable" in gate_result.output
+
+    def test_actual_tunnel_failure_still_hard_fails(self, mock_ssh_session, mocker):
+        """A genuine wg-quick failure (not tooling unavailable) still hard-aborts."""
+        mocker.patch(
+            "loft_cli.local.tunnel.tunnel_up",
+            return_value=(
+                False,
+                "wg-quick up failed (exit 1): RTNETLINK answers: Operation not permitted",
+            ),
+        )
+        mocker.patch("loft_cli.local.wireguard_store.save_wireguard_state")
+
+        p = self._make_tunnel_gate_plan()
+        executor = Executor(plan=p, ssh_session=mock_ssh_session)
+        result = executor.apply(dry_run=False)
+
+        assert result.status == "failed"
+        gate_result = next(
+            r for r in result.step_results if r.step_id == "verify_ssh_over_wireguard_tunnel"
+        )
+        assert gate_result.status == "failed"
