@@ -724,6 +724,7 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
                 depends_on=[idx_tunnel_gate],
                 tags=["ssh", "firewall", "wireguard"],
             )
+        )
 
     # ------------------------------------------------------------------ #
     # LOCAL: only after remote success
