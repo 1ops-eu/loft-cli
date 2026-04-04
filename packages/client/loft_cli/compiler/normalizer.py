@@ -102,7 +102,10 @@ def _derive_wg_public_key(private_key_b64: str) -> str:
 
     Uses PyNaCl (libsodium) which is already a transitive dependency via
     Fabric/Paramiko and is now an explicit dependency in pyproject.toml.
-    Returns an empty string if the key is invalid or PyNaCl is unavailable.
+
+    Raises RuntimeError if the key is invalid or PyNaCl is unavailable so
+    that callers receive a clear diagnostic rather than an empty string
+    silently propagating into WireGuard config files (see #168).
     """
     try:
         import nacl.public
@@ -110,8 +113,11 @@ def _derive_wg_public_key(private_key_b64: str) -> str:
         key_bytes = base64.b64decode(private_key_b64)
         priv = nacl.public.PrivateKey(key_bytes)
         return base64.b64encode(bytes(priv.public_key)).decode()
-    except Exception:
-        return ""
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to derive WireGuard public key: {exc}. "
+            "Ensure PyNaCl is installed: pip install pynacl"
+        ) from exc
 
 
 def _apply_state_dir(spec) -> None:
@@ -205,7 +211,18 @@ def _normalize_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> None:
                 ctx.wireguard_private_key = server_key_path.read_text(encoding="utf-8").strip()
             else:
                 ctx.wireguard_private_key = _generate_wg_private_key()
-            ctx.wireguard_public_key = _derive_wg_public_key(ctx.wireguard_private_key)
+            try:
+                ctx.wireguard_public_key = _derive_wg_public_key(ctx.wireguard_private_key)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"WireGuard server public key derivation failed: {exc}. "
+                    "Ensure PyNaCl is installed: pip install pynacl"
+                ) from exc
+        if not ctx.wireguard_public_key:
+            raise RuntimeError(
+                "WireGuard server public key is empty after derivation. "
+                "Ensure the private key is a valid Curve25519 key and PyNaCl is installed."
+            )
 
     # Auto-generate (or reuse) WireGuard client key pair.
     # The client private key is persisted to ~/.wg/loft-cli/{host}/client.key after
@@ -220,7 +237,18 @@ def _normalize_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> None:
             ctx.wg_client_private_key = client_key_path.read_text(encoding="utf-8").strip()
         else:
             ctx.wg_client_private_key = _generate_wg_private_key()
-        ctx.wg_client_public_key = _derive_wg_public_key(ctx.wg_client_private_key)
+        try:
+            ctx.wg_client_public_key = _derive_wg_public_key(ctx.wg_client_private_key)
+        except Exception as exc:
+            raise RuntimeError(
+                f"WireGuard client public key derivation failed: {exc}. "
+                "Ensure PyNaCl is installed: pip install pynacl"
+            ) from exc
+        if not ctx.wg_client_public_key:
+            raise RuntimeError(
+                "WireGuard client public key is empty after derivation. "
+                "Ensure the private key is a valid Curve25519 key and PyNaCl is installed."
+            )
 
     # Eagerly persist auto-generated keys to disk so they survive an aborted apply
     # (e.g. the tunnel-safety gate fails before save_local_wireguard_state runs).

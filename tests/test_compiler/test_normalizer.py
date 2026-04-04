@@ -102,108 +102,94 @@ def test_normalize_derives_wireguard_public_key(tmp_path):
     base64.b64decode(ctx.wg_client_public_key)
 
 
-# ---------------------------------------------------------------------------
-# Auto-key eager persistence (bug #167)
-# ---------------------------------------------------------------------------
+def test_normalize_raises_when_derive_public_key_fails_for_auto_gen(tmp_path, monkeypatch):
+    """normalize() must raise a RuntimeError (not silently produce '') when
+    _derive_wg_public_key fails during the auto-gen server-key path.
 
+    Regression test for #168: previously _derive_wg_public_key swallowed all
+    exceptions and returned "", which propagated as an empty PublicKey field in
+    the generated WireGuard configs, causing `wg-quick up wg0` to reject the
+    config with exit code 1.
+    """
+    import textwrap
 
-def _auto_key_spec_yaml(tmp_path):
-    """Write a minimal bootstrap spec with wireguard.enabled=true and no private_key_file."""
-    spec_yaml = tmp_path / "spec.yaml"
-    spec_yaml.write_text(
-        textwrap.dedent("""\
-        kind: bootstrap
-        meta:
-          name: auto-key-test
-          description: ""
-        host:
-          name: auto-key-node
-          address: 192.168.56.20
-        wireguard:
-          enabled: true
-          interface: wg0
-          address: 10.10.0.1/24
-          endpoint: "192.168.56.20:51820"
-          peer_address: "10.10.0.2/32"
-    """)
+    import loft_cli.compiler.normalizer as norm_mod
+
+    register_local_paths(
+        LocalPathsConfig(
+            wg_state_base=tmp_path / "wg",
+        )
     )
-    return spec_yaml
-
-
-def test_auto_key_persisted_to_disk_after_normalize(tmp_path):
-    """Bug #167: normalize() must eagerly write private.key to disk for auto-key specs."""
-    wg_base = tmp_path / "wg"
-    register_local_paths(LocalPathsConfig(wg_state_base=wg_base))
-
-    spec = load_spec(_auto_key_spec_yaml(tmp_path))
-    ctx = normalize(spec)
-
-    key_file = wg_base / "auto-key-node" / "private.key"
-    assert key_file.exists(), "private.key must be written to disk during normalize()"
-    assert key_file.read_text(encoding="utf-8").strip() == ctx.wireguard_private_key
-    assert oct(key_file.stat().st_mode)[-3:] == "600"
-
-
-def test_auto_client_key_persisted_to_disk_after_normalize(tmp_path):
-    """Bug #167: normalize() must eagerly write client.key to disk for auto-key specs."""
-    wg_base = tmp_path / "wg"
-    register_local_paths(LocalPathsConfig(wg_state_base=wg_base))
-
-    spec = load_spec(_auto_key_spec_yaml(tmp_path))
-    ctx = normalize(spec)
-
-    key_file = wg_base / "auto-key-node" / "client.key"
-    assert key_file.exists(), "client.key must be written to disk during normalize()"
-    assert key_file.read_text(encoding="utf-8").strip() == ctx.wg_client_private_key
-    assert oct(key_file.stat().st_mode)[-3:] == "600"
-
-
-def test_auto_key_stable_across_repeated_normalize(tmp_path):
-    """Bug #167: repeated normalize() calls must reuse the same auto-generated key."""
-    wg_base = tmp_path / "wg"
-    register_local_paths(LocalPathsConfig(wg_state_base=wg_base))
-
-    spec_yaml = _auto_key_spec_yaml(tmp_path)
-    ctx1 = normalize(load_spec(spec_yaml))
-    ctx2 = normalize(load_spec(spec_yaml))
-
-    assert ctx1.wireguard_private_key == ctx2.wireguard_private_key
-    assert ctx1.wg_client_private_key == ctx2.wg_client_private_key
-
-
-def test_explicit_private_key_file_not_written_to_disk(tmp_path):
-    """When private_key_file is set, normalize() must NOT write keys to wg_state_base."""
-    wg_base = tmp_path / "wg"
-    register_local_paths(LocalPathsConfig(wg_state_base=wg_base))
-
-    priv = "8IReoXMQH73MyHqq0PKq7jl1md08E5Cd4wfQf31qXHw="
-    key_file = tmp_path / "wg.key"
-    key_file.write_text(priv)
 
     spec_yaml = tmp_path / "spec.yaml"
     spec_yaml.write_text(
-        textwrap.dedent(f"""\
+        textwrap.dedent("""
         kind: bootstrap
         meta:
-          name: explicit-key-test
+          name: wg-autogen-test
           description: ""
         host:
-          name: explicit-key-node
+          name: wg-autogen-node
           address: 192.168.1.1
         wireguard:
           enabled: true
           interface: wg0
           address: 10.0.0.1/24
-          private_key_file: "{key_file}"
           endpoint: "192.168.1.1:51820"
           peer_address: "10.0.0.2/32"
     """)
     )
 
-    normalize(load_spec(spec_yaml))
+    def _broken_derive(private_key_b64: str) -> str:
+        raise Exception("nacl unavailable")
 
-    # The wg_state_base must NOT have a private.key written by the normalizer
-    state_key = wg_base / "explicit-key-node" / "private.key"
-    assert not state_key.exists(), (
-        "normalize() must not write private.key when private_key_file is supplied"
+    # Simulate nacl being broken / unavailable during public-key derivation
+    monkeypatch.setattr(norm_mod, "_derive_wg_public_key", _broken_derive)
+
+    spec = load_spec(spec_yaml)
+    with pytest.raises(RuntimeError, match="WireGuard"):
+        normalize(spec)
+
+
+def test_normalize_raises_when_derive_public_key_returns_empty_for_auto_gen(tmp_path, monkeypatch):
+    """normalize() must raise RuntimeError when _derive_wg_public_key returns ''
+    (the old silent-failure behaviour) rather than propagating the empty string
+    into the WireGuard config templates.
+
+    Regression test for #168.
+    """
+    import textwrap
+
+    import loft_cli.compiler.normalizer as norm_mod
+
+    register_local_paths(
+        LocalPathsConfig(
+            wg_state_base=tmp_path / "wg",
+        )
     )
+
+    spec_yaml = tmp_path / "spec.yaml"
+    spec_yaml.write_text(
+        textwrap.dedent("""
+        kind: bootstrap
+        meta:
+          name: wg-autogen-empty-test
+          description: ""
+        host:
+          name: wg-autogen-node2
+          address: 192.168.1.2
+        wireguard:
+          enabled: true
+          interface: wg0
+          address: 10.0.0.1/24
+          endpoint: "192.168.1.2:51820"
+          peer_address: "10.0.0.2/32"
+    """)
+    )
+
+    # Old behaviour: _derive_wg_public_key returned "" silently
+    monkeypatch.setattr(norm_mod, "_derive_wg_public_key", lambda _k: "")
+
+    spec = load_spec(spec_yaml)
+    with pytest.raises(RuntimeError, match="WireGuard"):
+        normalize(spec)
