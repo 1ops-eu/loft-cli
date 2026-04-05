@@ -4,8 +4,9 @@ Manages client-side WireGuard tunnels using ``wg-quick``. Each host gets a
 uniquely-named interface (``wg-{host}``) so multiple tunnels can coexist
 (e.g. Vagrant + Hetzner + production simultaneously).
 
-State discovery uses ``~/.wg/loft-cli/{host}/`` directories created by
-``wireguard_store.save_wireguard_state()``.
+State discovery uses ``~/.wg/loft-cli/{host}/`` directories (or
+``~/.wg/loft-cli/{provider}/{host}/`` when the host was bootstrapped with a
+provider) created by ``wireguard_store.save_wireguard_state()``.
 
 Requires ``wg-quick`` (part of ``wireguard-tools``) and ``sudo`` access.
 """
@@ -24,27 +25,44 @@ def _wg_state_base() -> Path:
     return get_local_paths().wg_state_base
 
 
-def _interface_name(host_name: str) -> str:
+def _interface_name(host_name: str, provider: str | None = None) -> str:
     """Derive the client-side WireGuard interface name from the host name.
 
-    Uses ``wg-{host}`` (truncated to 15 chars — Linux interface name limit).
+    Uses ``wg-{provider}--{host}`` (truncated to 15 chars — Linux interface name limit).
+    When provider is not set, uses ``wg-{host}`` for backward compatibility.
     Server side always keeps ``wg0`` (it only has one tunnel).
     """
-    raw = f"wg-{host_name}"
+    if provider:
+        raw = f"wg-{provider}--{host_name}"
+    else:
+        raw = f"wg-{host_name}"
     return raw[:15]
 
 
-def _host_dir(host_name: str) -> Path:
-    """Return the per-host WireGuard state directory."""
+def _host_dir(host_name: str) -> Path | None:
+    """Return the per-host WireGuard state directory, searching provider subdirs.
+
+    Returns the directory path if found, or ``None`` if not found.
+    Falls back to ``{wg_state_base}/{host_name}`` (non-existing) when nothing
+    is found, for backward compatibility with callers that test ``.exists()``.
+    """
+    from loft_cli.local.wireguard_store import find_wg_host_dir
+
+    found = find_wg_host_dir(host_name)
+    if found is not None:
+        return found
+    # Return the conventional flat path even if it doesn't exist,
+    # so callers get a usable Path object for error messages.
     return _wg_state_base() / host_name
 
 
-def _client_conf_path(host_name: str) -> Path:
+def _client_conf_path(host_name: str, provider: str | None = None) -> Path:
     """Return the path to the client wg-quick config file."""
-    return _host_dir(host_name) / "client.conf"
+    d = _host_dir(host_name)
+    return (d or (_wg_state_base() / host_name)) / "client.conf"
 
 
-def tunnel_up(host_name: str) -> tuple[bool, str]:
+def tunnel_up(host_name: str, provider: str | None = None) -> tuple[bool, str]:
     """Bring up the WireGuard tunnel for a host.
 
     Creates a temporary config file named after the interface so
@@ -52,11 +70,11 @@ def tunnel_up(host_name: str) -> tuple[bool, str]:
 
     Returns (success: bool, message: str).
     """
-    conf_path = _client_conf_path(host_name)
+    conf_path = _client_conf_path(host_name, provider)
     if not conf_path.exists():
         return False, f"No client.conf found at {conf_path} — run loft-cli apply first"
 
-    iface = _interface_name(host_name)
+    iface = _interface_name(host_name, provider)
 
     # Check if the interface is already active
     if _is_interface_active(iface):
@@ -94,7 +112,7 @@ def tunnel_up(host_name: str) -> tuple[bool, str]:
             iface_conf.unlink(missing_ok=True)
 
 
-def tunnel_down(host_name: str) -> tuple[bool, str]:
+def tunnel_down(host_name: str, provider: str | None = None) -> tuple[bool, str]:
     """Tear down the WireGuard tunnel for a host.
 
     Creates a temporary config file (mirroring ``tunnel_up``) so
@@ -104,12 +122,12 @@ def tunnel_down(host_name: str) -> tuple[bool, str]:
 
     Returns (success: bool, message: str).
     """
-    iface = _interface_name(host_name)
+    iface = _interface_name(host_name, provider)
 
     if not _is_interface_active(iface):
         return True, f"Tunnel {iface} is not active"
 
-    conf_path = _client_conf_path(host_name)
+    conf_path = _client_conf_path(host_name, provider)
     iface_conf = conf_path.parent / f"{iface}.conf" if conf_path.exists() else None
 
     try:
@@ -152,40 +170,55 @@ def tunnel_down(host_name: str) -> tuple[bool, str]:
 def tunnel_status() -> list[dict]:
     """List all known hosts with their WireGuard tunnel status.
 
-    Scans ``{wg_state_base}/*/metadata.json`` for host info and
-    cross-references with active interfaces via ``wg show``.
+    Scans ``{wg_state_base}/*/metadata.json`` (flat layout) and
+    ``{wg_state_base}/{provider}/*/metadata.json`` (provider-scoped layout)
+    for host info, then cross-references with active interfaces via ``wg show``.
+
+    Handles both legacy ``{base}/{host}/`` and provider-scoped
+    ``{base}/{provider}/{host}/`` directory structures.
 
     Returns a list of dicts with keys:
-        host_name, interface, endpoint, vpn_ip, peer_address, active, deployed_at
+        host_name, provider, interface, endpoint, vpn_ip, peer_address, active, deployed_at
     """
     base = _wg_state_base()
     if not base.exists():
         return []
 
-    # Get list of active WireGuard interfaces
     active_interfaces = _get_active_interfaces()
 
+    # Collect all candidate directories that may contain metadata.json.
+    # Both flat ({base}/{host}/) and provider-scoped ({base}/{provider}/{host}/)
+    # layouts are supported.
+    candidate_dirs: list[Path] = []
+    for entry in sorted(base.iterdir()):
+        if not entry.is_dir():
+            continue
+        if (entry / "metadata.json").exists():
+            # Flat layout: entry is a host directory.
+            candidate_dirs.append(entry)
+        else:
+            # Possibly a provider directory — scan one level deeper.
+            for sub in sorted(entry.iterdir()):
+                if sub.is_dir() and (sub / "metadata.json").exists():
+                    candidate_dirs.append(sub)
+
     hosts = []
-    for host_dir in sorted(base.iterdir()):
-        if not host_dir.is_dir():
-            continue
-
+    for host_dir in candidate_dirs:
         metadata_path = host_dir / "metadata.json"
-        if not metadata_path.exists():
-            continue
-
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
 
-        host_name = host_dir.name
-        iface = _interface_name(host_name)
+        host_name = metadata.get("host_name", host_dir.name)
+        provider = metadata.get("provider")
+        iface = _interface_name(host_name, provider)
         vpn_ip = metadata.get("address", "").split("/")[0]
 
         hosts.append(
             {
                 "host_name": host_name,
+                "provider": metadata.get("provider", ""),
                 "interface": iface,
                 "endpoint": metadata.get("endpoint", ""),
                 "vpn_ip": vpn_ip,

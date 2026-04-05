@@ -1,0 +1,63 @@
+kind: bootstrap
+
+meta:
+  name: hetzner-node-bootstrap
+  description: Harden a fresh Hetzner Cloud Ubuntu node for production self-hosting
+
+host:
+  name: hz-prod-1
+  address: 203.0.113.42
+  os_family: debian
+  provider: hetzner
+
+login:
+  user: root
+  private_key: ~/.ssh/id_ed25519
+  port: 22
+
+admin_user:
+  name: deploy
+  groups:
+    - sudo
+  pubkeys:
+    - ~/.ssh/id_ed25519.pub
+
+ssh:
+  port: 2222
+  disable_root_login: true
+  disable_password_auth: true
+
+firewall:
+  provider: ufw
+  ssh_only: true
+
+wireguard:
+  enabled: true
+  interface: wg0
+  address: 10.20.0.1/24
+  private_key_file: .secrets/wg-hz-prod-1.key
+  endpoint: 203.0.113.42:51820
+  peer_address: 10.20.0.2/32
+  persistent_keepalive: 25
+
+local:
+  ssh_config:
+    enabled: true
+    host_alias: hz-prod-1
+    config_path: ~/.ssh/config
+    preserve_legacy_entry: false
+
+  inventory:
+    enabled: true
+    db_path: ~/.loft-cli/inventory.db
+
+checks:
+  - type: ssh_reachable
+    port: 2222
+    user: deploy
+
+  - type: wireguard_up
+    interface: wg0
+
+  - type: port_open
+    port: 2222

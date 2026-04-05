@@ -132,9 +132,14 @@ def self_update(console: Console | None = None) -> bool:
 def update_agent(transport: Transport, console: Console | None = None) -> bool:
     """Update the loft-cli-agent binary on a remote host.
 
+    Tries to download the agent binary from GitHub Releases first.
+    Falls back to uploading the locally-available loft-cli-agent binary
+    (e.g. when running in CI without a published release, or when the
+    local binary is already up to date with the latest release).
+
     Returns True if an update was applied.
     """
-    from loft_cli.agent_installer import detect_agent
+    from loft_cli.agent_installer import detect_agent, get_local_agent_binary
     from loft_cli_core.agent_paths import AGENT_BINARY_PATH
 
     c = console or Console()
@@ -143,64 +148,99 @@ def update_agent(transport: Transport, console: Console | None = None) -> bool:
     current = detect_agent(transport)
     c.print(f"[dim]Agent version: {current or 'not installed'}[/dim]")
 
+    # Try GitHub Releases first
+    release = None
+    latest_tag = ""
     try:
         release = get_latest_release()
+        latest_tag = release.get("tag_name", "")
     except Exception as e:
-        c.print(f"[red]Failed to check for updates: {e}[/red]")
-        return False
+        c.print(f"[yellow]Could not check GitHub for updates: {e}[/yellow]")
 
-    latest_tag = release.get("tag_name", "")
-    if current and not is_newer(current, latest_tag):
+    if release and current and not is_newer(current, latest_tag):
         c.print(f"[green]Agent already up to date ({current})[/green]")
         return False
 
-    c.print(f"[bold]Updating agent to {latest_tag}[/bold]")
+    # Attempt to download the release binary from GitHub
+    remote_binary_content: bytes | None = None
+    if release and latest_tag:
+        c.print(f"[bold]Updating agent to {latest_tag}[/bold]")
 
-    # Detect target architecture
-    arch_result = transport.run("uname -m", warn=True)
-    machine = arch_result.stdout.strip() if arch_result.ok else "x86_64"
-    arch_map = {"x86_64": "amd64", "aarch64": "arm64"}
-    arch = arch_map.get(machine, machine)
-    suffix = f"linux-{arch}"
+        # Detect target architecture
+        arch_result = transport.run("uname -m", warn=True)
+        machine = arch_result.stdout.strip() if arch_result.ok else "x86_64"
+        arch_map = {"x86_64": "amd64", "aarch64": "arm64"}
+        arch = arch_map.get(machine, machine)
+        suffix = f"linux-{arch}"
 
-    url = find_asset_url(release, f"agent-{suffix}")
-    if not url:
+        url = find_asset_url(release, f"agent-{suffix}")
+        if url:
+            c.print(f"[dim]Downloading {url}...[/dim]")
+            try:
+                resp = requests.get(url, stream=True, timeout=60)
+                resp.raise_for_status()
+                remote_binary_content = resp.content
+            except Exception as e:
+                c.print(f"[yellow]Download from GitHub failed: {e}[/yellow]")
+        else:
+            c.print(
+                f"[yellow]No agent binary found for {suffix} in release {latest_tag}. "
+                f"Trying local binary fallback.[/yellow]"
+            )
+
+    if remote_binary_content is not None:
+        # Upload the downloaded binary via transport
+        import os
+        import tempfile
+
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as f:
+                f.write(remote_binary_content)
+                tmp_local = f.name
+
+            transport.upload(tmp_local, "/tmp/loft-cli-agent.tmp")
+            transport.run(f"mv /tmp/loft-cli-agent.tmp {AGENT_BINARY_PATH}", sudo=True, warn=True)
+            transport.run(f"chmod 755 {AGENT_BINARY_PATH}", sudo=True, warn=True)
+
+            os.unlink(tmp_local)
+
+            new_version = detect_agent(transport)
+            if not new_version:
+                c.print(
+                    "[red]Agent binary was uploaded but verification failed — "
+                    "the installed binary did not respond correctly.[/red]"
+                )
+                return False
+            c.print(f"[bold green]Agent updated to {new_version}[/bold green]")
+            return True
+
+        except Exception as e:
+            c.print(f"[yellow]GitHub binary upload failed: {e}. Trying local fallback.[/yellow]")
+
+    # Fall back to the locally-available loft-cli-agent binary
+    local_binary = get_local_agent_binary()
+    if local_binary is None:
         c.print(
-            f"[yellow]No agent binary found for {suffix} in release {latest_tag}. "
-            f"The release may predate the agent binary pipeline.[/yellow]"
+            "[red]No agent binary available: GitHub release download failed and "
+            "loft-cli-agent is not installed locally. "
+            "Install loft-cli-agent: pip install loft-cli-agent[/red]"
         )
         return False
 
-    c.print(f"[dim]Downloading {url}...[/dim]")
+    c.print(f"[dim]Using local binary: {local_binary}[/dim]")
     try:
-        resp = requests.get(url, stream=True, timeout=60)
-        resp.raise_for_status()
-        binary_content = resp.content
-
-        # Upload via transport
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as f:
-            f.write(binary_content)
-            tmp_local = f.name
-
-        transport.upload(tmp_local, "/tmp/loft-cli-agent.tmp")
+        transport.upload(str(local_binary), "/tmp/loft-cli-agent.tmp")
         transport.run(f"mv /tmp/loft-cli-agent.tmp {AGENT_BINARY_PATH}", sudo=True, warn=True)
         transport.run(f"chmod 755 {AGENT_BINARY_PATH}", sudo=True, warn=True)
 
-        # Verify
         new_version = detect_agent(transport)
         if not new_version:
             c.print(
-                "[red]Agent binary was uploaded but verification failed — "
+                "[red]Local agent binary was uploaded but verification failed — "
                 "the installed binary did not respond correctly.[/red]"
             )
             return False
-        c.print(f"[bold green]Agent updated to {new_version}[/bold green]")
-
-        import os
-
-        os.unlink(tmp_local)
+        c.print(f"[bold green]Agent installed from local binary ({new_version})[/bold green]")
         return True
 
     except Exception as e:

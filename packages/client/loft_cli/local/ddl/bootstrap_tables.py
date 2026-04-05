@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS tv_server (
     id                  TEXT NOT NULL,
     name                TEXT NOT NULL,
     address             TEXT NOT NULL,
+    provider            TEXT,
     os_family           TEXT,
     bootstrap_status    TEXT NOT NULL,
     ssh_alias           TEXT,

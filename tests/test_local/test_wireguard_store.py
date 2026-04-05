@@ -126,6 +126,33 @@ def test_client_key_not_overwritten_on_rerun(tmp_path):
     assert _CLIENT_PRIVATE_KEY in (host_dir / "client.key").read_text()
 
 
+def test_server_private_key_not_overwritten_on_rerun(tmp_path):
+    """private.key must survive re-runs (stable server identity — same failure class as #37)."""
+    _save(tmp_path)
+    # Second call with a *different* private key — write-once must protect the original
+    save_wireguard_state(
+        host_name="ubuntu-node-1",
+        spec_name="ubuntu-05-wireguard",
+        private_key="DIFFERENTKEY+differentkey+differentkey+di=",
+        public_key=_SERVER_PUBLIC_KEY,
+        wg_conf_content=_SERVER_CONF,
+        client_private_key=_CLIENT_PRIVATE_KEY,
+        client_public_key=_CLIENT_PUBLIC_KEY,
+        client_conf_content=_CLIENT_CONF,
+        interface="wg0",
+        address="10.10.0.1/24",
+        endpoint="192.168.56.10:51820",
+        peer_address="10.10.0.2/32",
+        persistent_keepalive=25,
+    )
+    from loft_cli_core.registry.local_paths import get_local_paths
+
+    host_dir = get_local_paths().wg_state_base / "ubuntu-node-1"
+    # Original key must still be present — not the replacement
+    assert _SERVER_PRIVATE_KEY in (host_dir / "private.key").read_text()
+    assert "DIFFERENTKEY" not in (host_dir / "private.key").read_text()
+
+
 def test_metadata_json_fields(tmp_path):
     host_dir = _save(tmp_path)
     meta = json.loads((host_dir / "metadata.json").read_text())
@@ -166,3 +193,93 @@ def test_custom_wg_state_base(tmp_path):
     host_dir = _save(tmp_path)
     assert host_dir.parent == custom_base
     assert (host_dir / "private.key").exists()
+
+
+# ---------------------------------------------------------------------------
+# Tests for persist_wireguard_keys  (bug #167 — eager key persistence)
+# ---------------------------------------------------------------------------
+
+from loft_cli.local.wireguard_store import persist_wireguard_keys  # noqa: E402
+
+
+def test_persist_wireguard_keys_creates_directory(tmp_path):
+    """persist_wireguard_keys must create the host directory when it doesn't exist."""
+    persist_wireguard_keys(
+        host_name="auto-key-host",
+        private_key=_SERVER_PRIVATE_KEY,
+        client_private_key=_CLIENT_PRIVATE_KEY,
+    )
+    from loft_cli_core.registry.local_paths import get_local_paths
+
+    host_dir = get_local_paths().wg_state_base / "auto-key-host"
+    assert host_dir.is_dir()
+    assert oct(host_dir.stat().st_mode)[-3:] == "700"
+
+
+def test_persist_wireguard_keys_writes_private_key(tmp_path):
+    """Server private key is written with mode 0600."""
+    persist_wireguard_keys(
+        host_name="auto-key-host",
+        private_key=_SERVER_PRIVATE_KEY,
+        client_private_key=_CLIENT_PRIVATE_KEY,
+    )
+    from loft_cli_core.registry.local_paths import get_local_paths
+
+    key_file = get_local_paths().wg_state_base / "auto-key-host" / "private.key"
+    assert key_file.exists()
+    assert _SERVER_PRIVATE_KEY in key_file.read_text()
+    assert oct(key_file.stat().st_mode)[-3:] == "600"
+
+
+def test_persist_wireguard_keys_writes_client_key(tmp_path):
+    """Client private key is written with mode 0600."""
+    persist_wireguard_keys(
+        host_name="auto-key-host",
+        private_key=_SERVER_PRIVATE_KEY,
+        client_private_key=_CLIENT_PRIVATE_KEY,
+    )
+    from loft_cli_core.registry.local_paths import get_local_paths
+
+    key_file = get_local_paths().wg_state_base / "auto-key-host" / "client.key"
+    assert key_file.exists()
+    assert _CLIENT_PRIVATE_KEY in key_file.read_text()
+    assert oct(key_file.stat().st_mode)[-3:] == "600"
+
+
+def test_persist_wireguard_keys_write_once_server(tmp_path):
+    """persist_wireguard_keys must not overwrite an existing server private.key."""
+    persist_wireguard_keys(
+        host_name="auto-key-host",
+        private_key=_SERVER_PRIVATE_KEY,
+        client_private_key=_CLIENT_PRIVATE_KEY,
+    )
+    # Second call with a DIFFERENT key must not overwrite
+    persist_wireguard_keys(
+        host_name="auto-key-host",
+        private_key="ZZZdifferentZZZ=",
+        client_private_key=_CLIENT_PRIVATE_KEY,
+    )
+    from loft_cli_core.registry.local_paths import get_local_paths
+
+    key_file = get_local_paths().wg_state_base / "auto-key-host" / "private.key"
+    assert _SERVER_PRIVATE_KEY in key_file.read_text()
+    assert "ZZZdifferentZZZ=" not in key_file.read_text()
+
+
+def test_persist_wireguard_keys_write_once_client(tmp_path):
+    """persist_wireguard_keys must not overwrite an existing client.key."""
+    persist_wireguard_keys(
+        host_name="auto-key-host",
+        private_key=_SERVER_PRIVATE_KEY,
+        client_private_key=_CLIENT_PRIVATE_KEY,
+    )
+    persist_wireguard_keys(
+        host_name="auto-key-host",
+        private_key=_SERVER_PRIVATE_KEY,
+        client_private_key="ZZZdifferentClientZZZ=",
+    )
+    from loft_cli_core.registry.local_paths import get_local_paths
+
+    key_file = get_local_paths().wg_state_base / "auto-key-host" / "client.key"
+    assert _CLIENT_PRIVATE_KEY in key_file.read_text()
+    assert "ZZZdifferentClientZZZ=" not in key_file.read_text()

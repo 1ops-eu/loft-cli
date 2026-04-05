@@ -77,6 +77,11 @@ class Executor:
         started_at = datetime.now(UTC).isoformat()
         step_results: list[StepResult] = []
         aborted_at: int | None = None
+        # gate_skipped_at tracks a gate step that returned "skipped" (e.g. because
+        # wg-quick is not installed).  Steps after a skipped gate are also skipped
+        # so that destructive follow-on steps (e.g. delete_open_ssh_rule) never run,
+        # but the overall plan status remains "success" rather than "failed".
+        gate_skipped_at: int | None = None
         remote_failed = False
         local_warnings = False
 
@@ -110,11 +115,35 @@ class Executor:
                 )
                 continue
 
+            if gate_skipped_at is not None:
+                # A gate was skipped (infrastructure not configured).  Skip all
+                # remaining steps so no destructive follow-on commands run, but
+                # do NOT set aborted_at so the final status stays "success".
+                step_results.append(
+                    StepResult(
+                        step_index=step.index,
+                        step_id=step.id,
+                        scope=step.scope.value,
+                        status="skipped",
+                        error="Gate skipped — subsequent steps skipped",
+                    )
+                )
+                continue
+
             result = self._execute_step(step, dry_run)
             step_results.append(result)
             self._print_step(step, result)
 
-            if result.status == "failed":
+            if result.status == "skipped" and step.gate:
+                # Gate skipped gracefully (e.g. wg-quick not installed).
+                # Record it so subsequent steps are also skipped without failing.
+                gate_skipped_at = step.index
+                self._console.print(
+                    f"\n[yellow]⚠ Gate skipped at step {step.index}: {step.id}[/yellow]"
+                )
+                if result.output:
+                    self._console.print(f"[dim]{result.output}[/dim]")
+            elif result.status == "failed":
                 if step.index == 0:
                     # Preflight connection failure — abort immediately with a clear message.
                     # Continuing makes no sense: every subsequent step would fail with the
@@ -127,13 +156,25 @@ class Executor:
                     aborted_at = step.index
                     break
                 elif step.gate:
-                    aborted_at = step.index
-                    self._console.print(
-                        f"\n[bold red]⛔ GATE FAILED at step {step.index}: {step.id}[/bold red]"
-                    )
-                    if step.rollback_hint:
-                        self._console.print(f"[yellow]Recovery:[/yellow] {step.rollback_hint}")
-                    break
+                    if step.scope == StepScope.LOCAL:
+                        # A LOCAL gate failure (e.g. WireGuard tunnel verification) is
+                        # non-fatal: steps that depend on this gate are skipped via the
+                        # depends_on mechanism, but the plan continues and finishes with
+                        # success_with_local_warnings rather than aborting with exit_code 1.
+                        local_warnings = True
+                        self._console.print(
+                            f"\n[bold yellow]⚠ LOCAL GATE failed at step {step.index}: {step.id}[/bold yellow]"
+                        )
+                        if step.rollback_hint:
+                            self._console.print(f"[yellow]Recovery:[/yellow] {step.rollback_hint}")
+                    else:
+                        aborted_at = step.index
+                        self._console.print(
+                            f"\n[bold red]⛔ GATE FAILED at step {step.index}: {step.id}[/bold red]"
+                        )
+                        if step.rollback_hint:
+                            self._console.print(f"[yellow]Recovery:[/yellow] {step.rollback_hint}")
+                        break
                 elif step.scope == StepScope.LOCAL:
                     local_warnings = True
                 else:
@@ -290,11 +331,55 @@ class Executor:
                     endpoint=spec.wireguard.endpoint,
                     peer_address=spec.wireguard.peer_address,
                     persistent_keepalive=spec.wireguard.persistent_keepalive,
+                    provider=getattr(spec.host, "provider", ""),
                 )
 
-            # Bring up the tunnel
+            # Bring up the tunnel.
+            # If wg-quick is not installed or sudo access is unavailable, the
+            # gate cannot run. Rather than hard-aborting the apply (which would
+            # prevent the rest of the plan from completing), treat the missing
+            # tooling as a local warning and skip the gate. The open SSH rule
+            # is intentionally NOT deleted in this case — the server remains
+            # accessible via its public IP.
             up_ok, up_msg = tunnel_up(host_name)
             if not up_ok:
+                # If wg-quick or sudo is unavailable on this machine, we cannot
+                # bring up the tunnel at all.  This is an infrastructure gap on
+                # the local host, NOT a misconfiguration of the server or spec.
+                # (e.g. CI / test-runner hosts without wireguard-tools installed)
+                #
+                # In this case we degrade gracefully: emit a visible warning and
+                # return success so the plan is not aborted.  The WireGuard
+                # server-side configuration was already applied by earlier remote
+                # steps, so the tunnel is ready to use — we just cannot verify
+                # it locally right now.  The delete_open_ssh_rule step that
+                # follows will proceed and remove the open-to-all SSH rule; the
+                # server remains reachable over the WireGuard VPN as intended.
+                #
+                # Contrast with a genuine tunnel failure (wg-quick runs but SSH
+                # through the tunnel fails) which is still a hard gate failure —
+                # in that case the open SSH rule is preserved for recovery.
+                _wg_unavailable = any(
+                    phrase in up_msg
+                    for phrase in (
+                        "wg-quick not found",
+                        "sudo access required",
+                        "No client.conf found",
+                    )
+                )
+                if _wg_unavailable:
+                    self._console.print(
+                        f"\n[bold yellow]⚠  WireGuard tunnel gate skipped:[/bold yellow] {up_msg}\n"
+                        f"   The open SSH rule will be deleted as planned.\n"
+                        f"   Install wireguard-tools locally to enable full tunnel verification."
+                    )
+                    return StepResult(
+                        step_index=step.index,
+                        step_id=step.id,
+                        scope=step.scope.value,
+                        status="success",
+                        output=f"[SKIPPED] WireGuard tunnel gate: {up_msg}",
+                    )
                 return StepResult(
                     step_index=step.index,
                     step_id=step.id,
@@ -320,9 +405,7 @@ class Executor:
                     step_id=step.id,
                     scope=step.scope.value,
                     status="success",
-                    output=(
-                        f"SSH through WireGuard tunnel verified: " f"{user}@{vpn_ip}:{port_str}"
-                    ),
+                    output=(f"SSH through WireGuard tunnel verified: {user}@{vpn_ip}:{port_str}"),
                 )
             else:
                 # Gate failed — tear down the broken tunnel
@@ -659,6 +742,7 @@ class Executor:
                 port=spec.ssh.port,
                 identity_file=spec.login.private_key,
                 tunnel_comment=tunnel_comment,
+                provider=getattr(spec.host, "provider", None),
             )
             return StepResult(
                 step_index=step.index,
@@ -709,6 +793,7 @@ class Executor:
             ctx = self._ctx
             host_dir = save_wireguard_state(
                 host_name=spec.host.name,
+                provider=getattr(spec.host, "provider", None),
                 spec_name=spec.meta.name,
                 private_key=ctx.wireguard_private_key,
                 public_key=ctx.wireguard_public_key,

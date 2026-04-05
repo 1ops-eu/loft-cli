@@ -18,18 +18,19 @@ def test_plan_has_steps(bootstrap_yaml):
 
 
 def test_plan_has_gate(bootstrap_yaml):
-    """The plan must contain exactly one gate: verify_admin_login_on_new_port."""
+    """The plan must contain the critical gate: verify_admin_login_on_new_port."""
     p = _make_plan(bootstrap_yaml)
     gates = [s for s in p.steps if s.gate]
-    assert len(gates) == 1
-    assert gates[0].id == "verify_admin_login_on_new_port"
+    assert len(gates) >= 1
+    gate_ids = [s.id for s in gates]
+    assert "verify_admin_login_on_new_port" in gate_ids
 
 
 def test_disable_root_depends_on_gate(bootstrap_yaml):
-    """CRITICAL: disable_root_login must depend on the gate step index."""
+    """CRITICAL: disable_root_login must depend on the verify_admin_login_on_new_port gate."""
     p = _make_plan(bootstrap_yaml)
 
-    gate = next(s for s in p.steps if s.gate)
+    gate = next(s for s in p.steps if s.id == "verify_admin_login_on_new_port")
     disable_root = next(s for s in p.steps if s.id == "disable_root_login")
 
     assert gate.index in disable_root.depends_on, (
@@ -39,10 +40,10 @@ def test_disable_root_depends_on_gate(bootstrap_yaml):
 
 
 def test_disable_password_auth_depends_on_gate(bootstrap_yaml):
-    """CRITICAL: disable_password_auth must depend on the gate step index."""
+    """CRITICAL: disable_password_auth must depend on the verify_admin_login_on_new_port gate."""
     p = _make_plan(bootstrap_yaml)
 
-    gate = next(s for s in p.steps if s.gate)
+    gate = next(s for s in p.steps if s.id == "verify_admin_login_on_new_port")
     disable_pw = next(s for s in p.steps if s.id == "disable_password_auth")
 
     assert gate.index in disable_pw.depends_on, (

@@ -45,6 +45,17 @@ class ValidationIssue:
 def validate_bootstrap(spec: BootstrapSpec) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
 
+    # provider required when using auto-managed keys
+    if not spec.admin_user.pubkeys and not spec.host.provider:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "host.provider",
+                "host.provider is required when admin_user.pubkeys is not set. "
+                "Set provider to the cloud platform name (e.g. hetzner, ionos, unknown).",
+            )
+        )
+
     # SSH port range
     if not (1 <= spec.ssh.port <= 65535):
         issues.append(
@@ -62,6 +73,18 @@ def validate_bootstrap(spec: BootstrapSpec) -> list[ValidationIssue]:
                 "error",
                 "ssh.disable_password_auth",
                 "disable_password_auth=true requires at least one pubkey in admin_user.pubkeys",
+            )
+        )
+
+    # Empty pubkeys require a provider (cloud provider will inject keys at provision time)
+    if not spec.admin_user.pubkeys and not spec.host.provider:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "admin_user.pubkeys",
+                "admin_user.pubkeys is empty and host.provider is not set — "
+                "either supply at least one pubkey or set host.provider so the "
+                "cloud provider can inject SSH keys at provision time",
             )
         )
 
@@ -111,6 +134,18 @@ def validate_bootstrap(spec: BootstrapSpec) -> list[ValidationIssue]:
                 "host.os_family",
                 f"os_family '{spec.host.os_family}' may not be fully supported; "
                 "loft-cli V1 targets Debian/Ubuntu",
+            )
+        )
+
+    # Host provider check
+    _known_providers = ("hetzner", "digitalocean", "aws", "gcp", "azure", "vultr", "linode")
+    if spec.host.provider is not None and spec.host.provider not in _known_providers:
+        issues.append(
+            ValidationIssue(
+                "warning",
+                "host.provider",
+                f"Unknown provider '{spec.host.provider}'; "
+                f"known providers: {', '.join(_known_providers)}",
             )
         )
 
@@ -503,8 +538,7 @@ def validate_systemd_unit(spec: SystemdUnitSpec) -> list[ValidationIssue]:
             ValidationIssue(
                 "error",
                 "unit.restart",
-                f"Invalid restart policy '{u.restart}'. "
-                f"Must be one of: {', '.join(valid_restart)}",
+                f"Invalid restart policy '{u.restart}'. Must be one of: {', '.join(valid_restart)}",
             )
         )
 
@@ -514,7 +548,7 @@ def validate_systemd_unit(spec: SystemdUnitSpec) -> list[ValidationIssue]:
             ValidationIssue(
                 "error",
                 "unit.type",
-                f"Invalid service type '{u.type}'. " f"Must be one of: {', '.join(valid_types)}",
+                f"Invalid service type '{u.type}'. Must be one of: {', '.join(valid_types)}",
             )
         )
 
@@ -544,8 +578,7 @@ def validate_systemd_unit(spec: SystemdUnitSpec) -> list[ValidationIssue]:
                 ValidationIssue(
                     "error",
                     "logrotate.frequency",
-                    f"Invalid frequency '{lr.frequency}'. "
-                    f"Must be one of: {', '.join(valid_freq)}",
+                    f"Invalid frequency '{lr.frequency}'. Must be one of: {', '.join(valid_freq)}",
                 )
             )
         if lr.rotate < 1:
@@ -731,6 +764,31 @@ def validate_stack(spec: StackSpec) -> list[ValidationIssue]:
     return issues
 
 
+def _suggest_kind(unknown: str, known: list[str]) -> str | None:
+    """Suggest closest matching kind for unknown spec kinds."""
+    unknown_lower = unknown.lower()
+    suggestions = {
+        "docker": "service with docker: enabled: true",
+        "compose": "compose_project",
+        "postgres_ensure": "postgres_ensure",
+    }
+    if unknown_lower in suggestions:
+        return f"Did you mean '{suggestions[unknown_lower]}'?"
+    return None
+
+
+def list_spec_kinds() -> list[str]:
+    """Return list of all registered spec kinds."""
+    from loft_cli_core.registry import get_spec_model, load_addons
+
+    load_addons()
+    kinds = []
+    for name in dir(get_spec_model("bootstrap").__class__.__module__):
+        if name.endswith("Spec") and name[0].isupper():
+            kinds.append(name.rstrip("Spec").lower().replace("_", "_"))
+    return sorted(set(kinds)) if kinds else []
+
+
 def validate_spec(spec) -> list[ValidationIssue]:
     # Ensure built-in and addon kinds are registered (idempotent).
     from loft_cli_core.registry import get_validator, load_addons
@@ -745,6 +803,15 @@ def validate_spec(spec) -> list[ValidationIssue]:
 
     validator = get_validator(spec.kind)
     if validator is None:
+        suggestion = _suggest_kind(spec.kind, [])
+        if suggestion:
+            return [
+                ValidationIssue(
+                    "error",
+                    "kind",
+                    f"Unknown spec kind '{spec.kind}'. {suggestion}",
+                )
+            ]
         return [
             ValidationIssue("error", "kind", f"No validator registered for spec kind '{spec.kind}'")
         ]

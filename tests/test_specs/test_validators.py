@@ -9,13 +9,18 @@ def _make_spec(**overrides) -> BootstrapSpec:
         "kind": "bootstrap",
         "meta": {"name": "test"},
         "host": {"name": "n1", "address": "1.2.3.4"},
+        "admin_user": {"name": "admin", "pubkeys": ["~/.ssh/id_ed25519.pub"]},
     }
     base.update(overrides)
     return BootstrapSpec.model_validate(base)
 
 
 def test_disable_password_auth_requires_pubkeys():
-    spec = _make_spec(ssh={"port": 2222, "disable_password_auth": True})
+    spec = _make_spec(
+        host={"name": "n1", "address": "1.2.3.4", "provider": "hetzner"},
+        ssh={"port": 2222, "disable_password_auth": True},
+        admin_user={"name": "admin", "pubkeys": []},
+    )
     issues = validate_bootstrap(spec)
     assert has_errors(issues)
     assert any("pubkey" in i.message for i in issues)
@@ -54,3 +59,24 @@ def test_invalid_ssh_port():
     issues = validate_bootstrap(spec)
     assert has_errors(issues)
     assert any("port" in i.field for i in issues)
+
+
+def test_empty_pubkeys_without_provider_is_error():
+    """No pubkeys and no provider means no SSH access after bootstrap — reject."""
+    spec = _make_spec(
+        admin_user={"name": "admin", "pubkeys": []},
+    )
+    issues = validate_bootstrap(spec)
+    assert has_errors(issues)
+    assert any(i.field == "admin_user.pubkeys" for i in issues if i.severity == "error")
+
+
+def test_empty_pubkeys_with_provider_is_ok():
+    """No pubkeys is allowed when host.provider is set (cloud injects keys)."""
+    spec = _make_spec(
+        host={"name": "n1", "address": "1.2.3.4", "provider": "hetzner"},
+        admin_user={"name": "admin", "pubkeys": []},
+    )
+    issues = validate_bootstrap(spec)
+    errors = [i for i in issues if i.severity == "error"]
+    assert not errors

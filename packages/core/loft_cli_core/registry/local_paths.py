@@ -63,7 +63,7 @@ def _default_state_dir() -> Path | None:
     """Read LOFT_CLI_STATE_DIR from environment, or return None."""
     val = os.environ.get("LOFT_CLI_STATE_DIR")
     if val:
-        return Path(val)
+        return Path(val).expanduser()
     return None
 
 
@@ -105,6 +105,7 @@ class LocalPathsConfig:
     wg_state_base: Path = field(default_factory=lambda: _UNSET)
     inventory_db_path: Path = field(default_factory=lambda: _UNSET)
     log_dir: Path = field(default_factory=lambda: _UNSET)
+    keys_base: Path = field(default_factory=lambda: _UNSET)
 
     def __post_init__(self) -> None:
         """Fill unset paths from state_dir or built-in defaults."""
@@ -130,6 +131,12 @@ class LocalPathsConfig:
                 if self.state_dir
                 else Path("~/.loft-cli/runs").expanduser()
             )
+        if self.keys_base is _UNSET:
+            self.keys_base = (
+                (self.state_dir / "keys")
+                if self.state_dir
+                else Path("~/.loft-cli/keys").expanduser()
+            )
 
 
 # Module-level singleton -- replaced wholesale on each call to register_local_paths().
@@ -145,3 +152,36 @@ def register_local_paths(config: LocalPathsConfig) -> None:
 def get_local_paths() -> LocalPathsConfig:
     """Return the currently active local paths config."""
     return _config
+
+
+def provider_ssh_conf_d_base(provider: str, config: LocalPathsConfig | None = None) -> Path:
+    """Return the SSH conf.d base directory namespaced under a provider.
+
+    When ``provider`` is non-empty, fragments are stored in a subdirectory
+    named after the provider so that keys from different cloud providers do
+    not collide:
+
+        {ssh_conf_d_base}/{provider}/  (e.g. ~/.ssh/conf.d/loft-cli/hetzner/)
+
+    When ``provider`` is empty the base directory itself is returned
+    (backward-compatible behaviour).
+    """
+    base = (config or _config).ssh_conf_d_base
+    if provider:
+        return base / provider
+    return base
+
+
+def provider_wg_state_base(provider: str, config: LocalPathsConfig | None = None) -> Path:
+    """Return the WireGuard state base directory namespaced under a provider.
+
+    When ``provider`` is non-empty, WG key material is stored under:
+
+        {wg_state_base}/{provider}/  (e.g. ~/.wg/loft-cli/hetzner/)
+
+    When ``provider`` is empty the base directory itself is returned.
+    """
+    base = (config or _config).wg_state_base
+    if provider:
+        return base / provider
+    return base

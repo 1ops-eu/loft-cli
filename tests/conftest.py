@@ -35,7 +35,8 @@ def bootstrap_yaml_content() -> str:
           name: admin
           groups:
             - sudo
-          pubkeys: []
+          pubkeys:
+            - ~/.ssh/id_ed25519.pub
         ssh:
           port: 2222
           disable_root_login: true

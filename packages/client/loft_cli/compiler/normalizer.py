@@ -102,7 +102,10 @@ def _derive_wg_public_key(private_key_b64: str) -> str:
 
     Uses PyNaCl (libsodium) which is already a transitive dependency via
     Fabric/Paramiko and is now an explicit dependency in pyproject.toml.
-    Returns an empty string if the key is invalid or PyNaCl is unavailable.
+
+    Raises RuntimeError if the key is invalid or PyNaCl is unavailable so
+    that callers receive a clear diagnostic rather than an empty string
+    silently propagating into WireGuard config files (see #168).
     """
     try:
         import nacl.public
@@ -110,8 +113,11 @@ def _derive_wg_public_key(private_key_b64: str) -> str:
         key_bytes = base64.b64decode(private_key_b64)
         priv = nacl.public.PrivateKey(key_bytes)
         return base64.b64encode(bytes(priv.public_key)).decode()
-    except Exception:
-        return ""
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to derive WireGuard public key: {exc}. "
+            "Ensure PyNaCl is installed: pip install pynacl"
+        ) from exc
 
 
 def _apply_state_dir(spec) -> None:
@@ -132,7 +138,7 @@ def _apply_state_dir(spec) -> None:
 
     effective = env_state_dir or spec_state_dir
     if effective:
-        register_local_paths(LocalPathsConfig(state_dir=Path(effective)))
+        register_local_paths(LocalPathsConfig(state_dir=Path(effective).expanduser()))
 
 
 def _resolve_db_path(spec) -> Path:
@@ -195,17 +201,29 @@ def _normalize_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> None:
                 ctx.wireguard_public_key = _derive_wg_public_key(ctx.wireguard_private_key)
             else:
                 ctx.wireguard_private_key = f"<key not found: {wg_key_path}>"
-                ctx.wireguard_public_key = ""
+                ctx.wireguard_public_key = f"<key not found: {wg_key_path}>"
         else:
             # Auto-generate: reuse persisted key or generate fresh (write-once)
-            from loft_cli_core.registry.local_paths import get_local_paths
+            from loft_cli_core.registry.local_paths import get_local_paths, provider_wg_state_base
 
-            server_key_path = get_local_paths().wg_state_base / spec.host.name / "private.key"
+            wg_base = provider_wg_state_base(spec.host.provider, get_local_paths())
+            server_key_path = wg_base / spec.host.name / "private.key"
             if server_key_path.exists():
                 ctx.wireguard_private_key = server_key_path.read_text(encoding="utf-8").strip()
             else:
                 ctx.wireguard_private_key = _generate_wg_private_key()
-            ctx.wireguard_public_key = _derive_wg_public_key(ctx.wireguard_private_key)
+            try:
+                ctx.wireguard_public_key = _derive_wg_public_key(ctx.wireguard_private_key)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"WireGuard server public key derivation failed: {exc}. "
+                    "Ensure PyNaCl is installed: pip install pynacl"
+                ) from exc
+        if not ctx.wireguard_public_key:
+            raise RuntimeError(
+                "WireGuard server public key is empty after derivation. "
+                "Ensure the private key is a valid Curve25519 key and PyNaCl is installed."
+            )
 
     # Auto-generate (or reuse) WireGuard client key pair.
     # The client private key is persisted to ~/.wg/loft-cli/{host}/client.key after
@@ -213,19 +231,47 @@ def _normalize_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> None:
     # On first run the file won't exist yet — we generate it in memory here and the
     # executor's save_wireguard_state step writes it to disk.
     if spec.wireguard.enabled:
-        from loft_cli_core.registry.local_paths import get_local_paths
+        from loft_cli_core.registry.local_paths import get_local_paths, provider_wg_state_base
 
-        client_key_path = get_local_paths().wg_state_base / spec.host.name / "client.key"
+        wg_base = provider_wg_state_base(spec.host.provider, get_local_paths())
+        client_key_path = wg_base / spec.host.name / "client.key"
         if client_key_path.exists():
             ctx.wg_client_private_key = client_key_path.read_text(encoding="utf-8").strip()
         else:
             ctx.wg_client_private_key = _generate_wg_private_key()
-        ctx.wg_client_public_key = _derive_wg_public_key(ctx.wg_client_private_key)
+        try:
+            ctx.wg_client_public_key = _derive_wg_public_key(ctx.wg_client_private_key)
+        except Exception as exc:
+            raise RuntimeError(
+                f"WireGuard client public key derivation failed: {exc}. "
+                "Ensure PyNaCl is installed: pip install pynacl"
+            ) from exc
+        if not ctx.wg_client_public_key:
+            raise RuntimeError(
+                "WireGuard client public key is empty after derivation. "
+                "Ensure the private key is a valid Curve25519 key and PyNaCl is installed."
+            )
+
+    # Eagerly persist auto-generated keys to disk so they survive an aborted apply
+    # (e.g. the tunnel-safety gate fails before save_local_wireguard_state runs).
+    # persist_wireguard_keys uses write-once semantics — already-persisted keys are
+    # never overwritten.  We only call this for the auto-key path (no private_key_file)
+    # because the explicit-file path reads keys from a user-owned file that we must
+    # not touch.
+    if spec.wireguard.enabled and not spec.wireguard.private_key_file:
+        from loft_cli.local.wireguard_store import persist_wireguard_keys
+
+        persist_wireguard_keys(
+            host_name=spec.host.name,
+            private_key=ctx.wireguard_private_key,
+            client_private_key=ctx.wg_client_private_key,
+        )
 
     # Compute SSH conf.d path   using the addon-overridable base directory
-    from loft_cli_core.registry.local_paths import get_local_paths
+    from loft_cli_core.registry.local_paths import get_local_paths, provider_ssh_conf_d_base
 
-    ssh_conf_d_base = get_local_paths().ssh_conf_d_base
+    provider = spec.host.provider
+    ssh_conf_d_base = provider_ssh_conf_d_base(provider, get_local_paths())
     ctx.ssh_conf_d_path = ssh_conf_d_base / f"{spec.host.name}.conf"
 
     # If host_alias not set, default to host name

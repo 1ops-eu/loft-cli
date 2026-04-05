@@ -20,6 +20,7 @@ class HostBlock(BaseModel):
     name: str
     address: str
     os_family: str = "debian"
+    provider: str = ""  # Cloud/VPS provider (e.g. "hetzner", "digitalocean", "vultr")
 
 
 class LoginBlock(BaseModel):

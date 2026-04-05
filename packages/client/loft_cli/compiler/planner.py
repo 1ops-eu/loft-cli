@@ -645,8 +645,9 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
 
     # ------------------------------------------------------------------ #
     # WireGuard SSH restriction — MUST be the absolute last remote steps.
-    # Adds a WireGuard-restricted SSH rule, verifies SSH through the tunnel
-    # from the client side, then removes the open-to-all rule.
+    # Adds a WireGuard-restricted SSH rule. When registered_peers_only=true,
+    # also verifies SSH through the tunnel from the client side before removing
+    # the open-to-all rule (lockout protection).
     # After delete_open_ssh_rule executes, direct SSH to spec.host.address
     # stops working.
     # ------------------------------------------------------------------ #
@@ -679,10 +680,13 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
             )
         )
 
-        # Tunnel safety gate: bring up WireGuard tunnel locally, verify SSH
-        # through the VPN IP, and only then proceed to delete the open SSH rule.
-        # If this gate fails, the open SSH rule is NOT deleted — the server
-        # remains accessible via public IP.
+        # Tunnel safety gate: verify SSH through the VPN IP, then delete the
+        # open-to-all SSH rule (delete_open_ssh_rule depends_on this step).
+        # gate=False so that local wg-quick failures (missing tool, sudo
+        # unavailable, network issue) do NOT abort the plan — they set
+        # local_warnings instead.  The depends_on on delete_open_ssh_rule
+        # ensures it is skipped whenever this step fails, leaving the open
+        # SSH rule intact and the server reachable via its public IP.
         wg_server_vpn_ip = str(_ip_wg.ip_interface(spec.wireguard.address).ip)
         steps.append(
             _s(
@@ -697,16 +701,17 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
                     f"tunnel_ssh_gate:{spec.host.name}:{wg_server_vpn_ip}"
                     f":{spec.ssh.port}:{spec.admin_user.name}"
                 ),
-                gate=True,
+                gate=False,
                 rollback_hint=(
                     "WireGuard tunnel SSH verification failed. The open SSH rule was NOT deleted — "
                     "the server is still accessible via its public IP. "
                     "Check WireGuard configuration, ensure wg-quick is installed locally, "
                     "and verify the tunnel can be established."
                 ),
-                tags=["wireguard", "ssh", "gate", "tunnel"],
+                tags=["wireguard", "ssh", "tunnel"],
             )
         )
+        idx_tunnel_gate = len(steps) - 1
 
         steps.append(
             _s(
@@ -716,6 +721,7 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
                 StepKind.SSH_COMMAND,
                 command=bs.delete_open_ssh_rule(spec.ssh.port),
                 sudo=True,
+                depends_on=[idx_tunnel_gate],
                 tags=["ssh", "firewall", "wireguard"],
             )
         )
@@ -759,10 +765,16 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
 
     # WireGuard local state — save key material + metadata after remote success
     if spec.wireguard.enabled:
+        _provider = getattr(spec.host, "provider", "")
+        _wg_path = (
+            f"~/.wg/loft-cli/{_provider}/{spec.host.name}/"
+            if _provider
+            else f"~/.wg/loft-cli/{spec.host.name}/"
+        )
         steps.append(
             _s(
                 "save_local_wireguard_state",
-                f"Save WireGuard state to ~/.wg/loft-cli/{spec.host.name}/",
+                f"Save WireGuard state to {_wg_path}",
                 L,
                 StepKind.LOCAL_COMMAND,
                 command="save_wireguard_state",

@@ -53,6 +53,19 @@ def _startup() -> None:
     load_addons()
 
 
+def _parse_identifier(identifier: str) -> tuple[str | None, str]:
+    """Parse identifier into (provider, host_name).
+
+    Supports:
+    - "host" -> (None, "host")
+    - "provider/host" -> ("provider", "host")
+    """
+    if "/" in identifier:
+        parts = identifier.split("/", 1)
+        return parts[0], parts[1]
+    return None, identifier
+
+
 # ------------------------------------------------------------------ #
 # version
 # ------------------------------------------------------------------ #
@@ -354,6 +367,10 @@ def doctor(
     Generates a plan from the spec, sends it to the agent's doctor
     command, and displays which resources have drifted, are missing,
     or are orphaned.
+
+    If the agent is not yet installed on the target server, this command
+    will attempt to install it automatically using the local loft-cli-agent
+    binary before running the doctor check.
     """
     from loft_cli.agent_installer import detect_agent
     from loft_cli.runtime.fabric_transport import FabricTransport
@@ -385,12 +402,28 @@ def doctor(
 
         agent_version = detect_agent(transport)
         if not agent_version:
+            # Agent is not installed — attempt auto-install from local binary
             console.print(
-                "[bold red]No agent installed on the target server.[/bold red]\n"
-                "Install the agent first: loft-cli apply <spec.yaml>"
+                "[yellow]Agent not found on target server — attempting automatic install...[/yellow]"
             )
-            transport.close()
-            raise typer.Exit(1)
+            from loft_cli.updater import update_agent
+
+            installed = update_agent(transport, console=console)
+            if not installed:
+                console.print(
+                    "[bold red]No agent installed on the target server and auto-install failed.[/bold red]\n"
+                    "Install the agent first: loft-cli agent-update <host>"
+                )
+                transport.close()
+                raise typer.Exit(1)
+            agent_version = detect_agent(transport)
+            if not agent_version:
+                console.print(
+                    "[bold red]Agent was installed but could not be detected.[/bold red]\n"
+                    "Try running: loft-cli agent-update <host>"
+                )
+                transport.close()
+                raise typer.Exit(1)
 
         # Upload the current plan as the desired state
         from loft_cli_core.agent_paths import AGENT_BINARY_PATH, AGENT_DESIRED_DIR
@@ -923,13 +956,17 @@ def rotate_secret_cmd(
 
 @tunnel_app.command("up")
 def tunnel_up_cmd(
-    host: str = typer.Argument(..., help="Host name to bring up the tunnel for"),
+    host: str = typer.Argument(..., help="Host name or provider/host (e.g., hetzner/dev-vps)"),
+    env_file: list[Path] | None = typer.Option(
+        None, "--env-file", help="Load environment variables from .env file(s)"
+    ),
 ) -> None:
     """Bring up the WireGuard tunnel for a host."""
     from loft_cli.local.tunnel import tunnel_up
 
+    provider, host_name = _parse_identifier(host)
     console.print(f"[bold]Bringing up WireGuard tunnel for {host}...[/bold]")
-    ok, msg = tunnel_up(host)
+    ok, msg = tunnel_up(host_name, provider)
     if ok:
         console.print(f"[bold green]{msg}[/bold green]")
     else:
@@ -939,13 +976,17 @@ def tunnel_up_cmd(
 
 @tunnel_app.command("down")
 def tunnel_down_cmd(
-    host: str = typer.Argument(..., help="Host name to tear down the tunnel for"),
+    host: str = typer.Argument(..., help="Host name or provider/host (e.g., hetzner/dev-vps)"),
+    env_file: list[Path] | None = typer.Option(
+        None, "--env-file", help="Load environment variables from .env file(s)"
+    ),
 ) -> None:
     """Tear down the WireGuard tunnel for a host."""
     from loft_cli.local.tunnel import tunnel_down
 
+    provider, host_name = _parse_identifier(host)
     console.print(f"[bold]Tearing down WireGuard tunnel for {host}...[/bold]")
-    ok, msg = tunnel_down(host)
+    ok, msg = tunnel_down(host_name, provider)
     if ok:
         console.print(f"[bold green]{msg}[/bold green]")
     else:
@@ -965,6 +1006,7 @@ def tunnel_status_cmd() -> None:
 
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
     table.add_column("Host", min_width=15)
+    table.add_column("Provider", min_width=10)
     table.add_column("Interface", min_width=12)
     table.add_column("VPN IP", min_width=12)
     table.add_column("Endpoint", min_width=20)
@@ -977,6 +1019,7 @@ def tunnel_status_cmd() -> None:
         )
         table.add_row(
             h["host_name"],
+            h.get("provider", "") or "-",
             h["interface"],
             h["vpn_ip"],
             h["endpoint"],
@@ -993,13 +1036,22 @@ def tunnel_status_cmd() -> None:
 
 @app.command()
 def remove(
-    host: str = typer.Argument(..., help="Host name to remove all local state for"),
+    host: str = typer.Argument(
+        ...,
+        help="Host name or provider/host format (e.g., hetzner/dev-vps) to remove all local state for",
+    ),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
 ) -> None:
     """Remove all local loft-cli state for a decommissioned machine.
 
     Tears down any active WireGuard tunnel, removes WG state, SSH config,
-    and marks the inventory record as decommissioned.
+    SSH keys, and marks the inventory record as decommissioned.
+
+    Use provider/host format to remove provider-scoped state:
+        loft remove hetzner/dev-vps
+
+    Or legacy single-level format:
+        loft remove dev-vps
     """
     from loft_cli.local.remove import remove_host
 
@@ -1159,3 +1211,24 @@ def inventory_show(
 
 if __name__ == "__main__":
     app()
+
+
+# ------------------------------------------------------------------ #
+# prep
+# ------------------------------------------------------------------ #
+
+
+@app.command(name="prep")
+def prep(
+    spec: Path = typer.Argument(..., help="Path to YAML spec file", exists=True),
+    env_file: list[Path] | None = typer.Option(
+        None, "--env-file", help="Load environment variables from .env file(s) (repeatable)"
+    ),
+    check_connection: bool = typer.Option(
+        False, "--check-connection", help="Verify SSH connectivity after key generation"
+    ),
+) -> None:
+    """Prepare a host for bootstrapping: generate SSH keys, display public key."""
+    from loft_cli.commands.prep import main as prep_main
+
+    prep_main(spec, env_file, check_connection)
