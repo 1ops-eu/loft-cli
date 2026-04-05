@@ -15,8 +15,6 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
-
 from loft_cli.compiler.normalizer import normalize
 from loft_cli.compiler.planner import plan
 from loft_cli_core.plan.models import StepKind, StepScope
@@ -210,12 +208,12 @@ class TestWireGuardTunnelGate:
         gate = next(s for s in p.steps if s.id == "verify_ssh_over_wireguard_tunnel")
         delete = next(s for s in p.steps if s.id == "delete_open_ssh_rule")
 
-        assert allow.index < gate.index, (
-            f"allow ({allow.index}) must come before gate ({gate.index})"
-        )
-        assert gate.index < delete.index, (
-            f"gate ({gate.index}) must come before delete ({delete.index})"
-        )
+        assert (
+            allow.index < gate.index
+        ), f"allow ({allow.index}) must come before gate ({gate.index})"
+        assert (
+            gate.index < delete.index
+        ), f"gate ({gate.index}) must come before delete ({delete.index})"
 
     def test_delete_open_ssh_rule_depends_on_wg_gate(self, tmp_path):
         """delete_open_ssh_rule must declare depends_on the WireGuard gate so it is

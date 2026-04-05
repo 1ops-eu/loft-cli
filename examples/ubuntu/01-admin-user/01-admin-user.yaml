@@ -12,6 +12,7 @@ host:
   name: ubuntu-node-1
   address: 203.0.113.10
   os_family: ubuntu
+  provider: unknown
 
 login:
   user: root

@@ -165,7 +165,6 @@ def save_wireguard_state(
         "host_name": host_name,
         "provider": provider,
         "spec_name": spec_name,
-        "provider": provider,
         "deployed_at": datetime.now(UTC).isoformat(),
         "interface": interface,
         "client_interface": f"wg-{provider + '--' if provider else ''}{host_name}"[:15],

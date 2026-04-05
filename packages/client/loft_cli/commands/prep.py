@@ -35,8 +35,8 @@ def main(
         loft prep 01-bootstrap/bootstrap.yaml --env-file .env
     """
     from loft_cli.compiler.parser import parse
-    from loft_cli_core.specs.validators import validate_spec, has_errors
     from loft_cli_core.registry import load_addons
+    from loft_cli_core.specs.validators import validate_spec
 
     load_addons()
 
@@ -86,7 +86,7 @@ def main(
         priv_key_path = ensure_ssh_keypair(provider, host_name, console=console)
     except Exception as e:
         console.print(f"[red]Failed to generate SSH keypair: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     pub_key_path = priv_key_path.with_suffix(".pub")
     if not pub_key_path.exists():
@@ -118,7 +118,7 @@ def main(
         _verify_connection(spec, console)
 
 
-def _verify_connection(spec, console: "Console") -> None:
+def _verify_connection(spec, console: Console) -> None:
     """Verify SSH connectivity to the host."""
     from loft_cli.local.keys import ssh_key_dir
 
@@ -139,7 +139,7 @@ def _verify_connection(spec, console: "Console") -> None:
     port = spec.login.port
     user = spec.login.user
 
-    console.print(f"\n[bold]Verifying SSH connectivity...[/bold]")
+    console.print("\n[bold]Verifying SSH connectivity...[/bold]")
     console.print(f"  Host: {host}:{port}")
     console.print(f"  User: {user}")
     console.print(f"  Key: {key_path}")
@@ -169,23 +169,23 @@ def _verify_connection(spec, console: "Console") -> None:
         )
 
         if result.returncode == 0:
-            console.print(f"\n[green]✓ SSH connection successful![/green]")
+            console.print("\n[green]✓ SSH connection successful![/green]")
             console.print(f"  Response: {result.stdout.strip()}")
         else:
-            console.print(f"\n[red]✗ SSH connection failed[/red]")
+            console.print("\n[red]✗ SSH connection failed[/red]")
             if result.stderr:
                 console.print(f"  Error: {result.stderr.strip()}")
             raise typer.Exit(1)
 
     except subprocess.TimeoutExpired:
-        console.print(f"\n[red]✗ Connection timed out (15s)[/red]")
-        raise typer.Exit(1)
+        console.print("\n[red]✗ Connection timed out (15s)[/red]")
+        raise typer.Exit(1) from None
     except FileNotFoundError:
-        console.print(f"\n[red]✗ SSH command not found[/red]")
-        raise typer.Exit(1)
+        console.print("\n[red]✗ SSH command not found[/red]")
+        raise typer.Exit(1) from None
     except Exception as e:
         console.print(f"\n[red]✗ Connection error: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":

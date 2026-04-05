@@ -172,9 +172,9 @@ def test_tunnel_gate_skips_gracefully_when_wg_quick_missing(mock_ssh_session, mo
     gate_result = next(
         r for r in result.step_results if r.step_id == "verify_ssh_over_wireguard_tunnel"
     )
-    assert gate_result.status == "success", (
-        "Gate should succeed (not abort) when wg-quick is unavailable"
-    )
+    assert (
+        gate_result.status == "success"
+    ), "Gate should succeed (not abort) when wg-quick is unavailable"
     assert "SKIPPED" in gate_result.output
 
 
@@ -239,9 +239,9 @@ def test_tunnel_gate_fails_hard_when_tunnel_up_but_ssh_fails(mock_ssh_session, m
     gate_result = next(
         r for r in result.step_results if r.step_id == "verify_ssh_over_wireguard_tunnel"
     )
-    assert gate_result.status == "failed", (
-        "Gate should hard-fail when tunnel is up but SSH through it fails"
-    )
+    assert (
+        gate_result.status == "failed"
+    ), "Gate should hard-fail when tunnel is up but SSH through it fails"
     assert result.aborted_at == 0, "Plan should be aborted when tunnel SSH verification fails"
 
 

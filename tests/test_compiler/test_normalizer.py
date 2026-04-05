@@ -60,7 +60,6 @@ def test_normalize_resolves_login_key(bootstrap_yaml):
 
 def test_normalize_derives_wireguard_public_key(tmp_path):
     """When a valid WireGuard private key is supplied, public key is derived via PyNaCl."""
-    import textwrap
 
     # Write a real WireGuard private key to a temp file
     priv = "8IReoXMQH73MyHqq0PKq7jl1md08E5Cd4wfQf31qXHw="
@@ -69,8 +68,7 @@ def test_normalize_derives_wireguard_public_key(tmp_path):
     key_file.write_text(priv)
 
     spec_yaml = tmp_path / "spec.yaml"
-    spec_yaml.write_text(
-        textwrap.dedent(f"""
+    spec_yaml.write_text(textwrap.dedent(f"""
         kind: bootstrap
         meta:
           name: wg-test
@@ -85,8 +83,7 @@ def test_normalize_derives_wireguard_public_key(tmp_path):
           private_key_file: "{key_file}"
           endpoint: "192.168.1.1:51820"
           peer_address: "10.0.0.2/32"
-    """)
-    )
+    """))
 
     spec = load_spec(spec_yaml)
     ctx = normalize(spec)
@@ -105,7 +102,6 @@ def test_normalize_derives_wireguard_public_key(tmp_path):
 def test_normalize_auto_key_reuses_persisted_key_on_second_run(tmp_path):
     """Auto-key path: second normalize() call reuses the private.key from disk."""
     import base64
-    import textwrap
 
     from loft_cli_core.registry.local_paths import LocalPathsConfig, register_local_paths
 
@@ -118,8 +114,7 @@ def test_normalize_auto_key_reuses_persisted_key_on_second_run(tmp_path):
     )
 
     spec_yaml = tmp_path / "spec.yaml"
-    spec_yaml.write_text(
-        textwrap.dedent("""
+    spec_yaml.write_text(textwrap.dedent("""
         kind: bootstrap
         meta:
           name: wg-auto-test
@@ -133,8 +128,7 @@ def test_normalize_auto_key_reuses_persisted_key_on_second_run(tmp_path):
           address: 10.0.0.1/24
           endpoint: "192.168.1.1:51820"
           peer_address: "10.0.0.2/32"
-    """)
-    )
+    """))
 
     from loft_cli_core.specs.loader import load_spec
 
@@ -162,9 +156,6 @@ def test_normalize_auto_key_reuses_persisted_key_on_second_run(tmp_path):
 
 def test_normalize_auto_key_state_dir_tilde_expansion(tmp_path):
     """state_dir with a tilde prefix must be expanded before key path checks."""
-    import textwrap
-
-    import os
 
     # Point LOFT_CLI_STATE_DIR to a real tmp_path (no tilde needed for the env var test,
     # but we verify that Path(...).expanduser() doesn't break an already-absolute path).
@@ -172,8 +163,7 @@ def test_normalize_auto_key_state_dir_tilde_expansion(tmp_path):
     state_dir.mkdir()
 
     spec_yaml = tmp_path / "spec.yaml"
-    spec_yaml.write_text(
-        textwrap.dedent(f"""
+    spec_yaml.write_text(textwrap.dedent(f"""
         kind: bootstrap
         meta:
           name: wg-tilde-test
@@ -189,8 +179,7 @@ def test_normalize_auto_key_state_dir_tilde_expansion(tmp_path):
           peer_address: "10.0.0.2/32"
         local:
           state_dir: "{state_dir}"
-    """)
-    )
+    """))
 
     from loft_cli_core.specs.loader import load_spec
 
