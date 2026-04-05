@@ -503,8 +503,7 @@ def validate_systemd_unit(spec: SystemdUnitSpec) -> list[ValidationIssue]:
             ValidationIssue(
                 "error",
                 "unit.restart",
-                f"Invalid restart policy '{u.restart}'. "
-                f"Must be one of: {', '.join(valid_restart)}",
+                f"Invalid restart policy '{u.restart}'. Must be one of: {', '.join(valid_restart)}",
             )
         )
 
@@ -514,7 +513,7 @@ def validate_systemd_unit(spec: SystemdUnitSpec) -> list[ValidationIssue]:
             ValidationIssue(
                 "error",
                 "unit.type",
-                f"Invalid service type '{u.type}'. " f"Must be one of: {', '.join(valid_types)}",
+                f"Invalid service type '{u.type}'. Must be one of: {', '.join(valid_types)}",
             )
         )
 
@@ -544,8 +543,7 @@ def validate_systemd_unit(spec: SystemdUnitSpec) -> list[ValidationIssue]:
                 ValidationIssue(
                     "error",
                     "logrotate.frequency",
-                    f"Invalid frequency '{lr.frequency}'. "
-                    f"Must be one of: {', '.join(valid_freq)}",
+                    f"Invalid frequency '{lr.frequency}'. Must be one of: {', '.join(valid_freq)}",
                 )
             )
         if lr.rotate < 1:
@@ -753,3 +751,37 @@ def validate_spec(spec) -> list[ValidationIssue]:
 
 def has_errors(issues: list[ValidationIssue]) -> bool:
     return any(i.severity == "error" for i in issues)
+
+
+def validate_package(spec) -> list[ValidationIssue]:
+    """Validate a package spec."""
+    issues: list[ValidationIssue] = []
+
+    if not spec.packages:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "packages",
+                "At least one package entry is required",
+            )
+        )
+
+    for entry in spec.packages:
+        if not entry.name or not entry.name.strip():
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "packages[].name",
+                    "Package name must not be empty",
+                )
+            )
+        if entry.state not in ("present", "absent"):
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "packages[].state",
+                    f"Invalid state '{entry.state}': must be 'present' or 'absent'",
+                )
+            )
+
+    return issues
