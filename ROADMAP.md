@@ -22,7 +22,7 @@ The roadmap is organized around milestones. Each milestone corresponds to a mean
 |---|---|---|
 | `loft-cli` | Client CLI — validate, plan, docs, diff, apply, doctor, reconcile | Operator's machine (Linux, macOS, Windows) |
 | `loft-cli-agent` | Server-side executor — receives plans, applies locally, tracks state | Target server (Linux only) |
-| `loft-cli-agent` (companion mode, v0.8+) | Optional visual workflow as alternative to CLI | Operator's machine |
+| `loft-cli-pro` | Commercial companion — browser-triggered deploys, credential store, status reporting | Operator's machine |
 
 The client is the **transporter** — it parses specs, generates plans, and delivers them to the agent. The agent is the **operator** — it executes plans locally, tracks runtime state, enforces policy, and supports extensible job types.
 
@@ -51,7 +51,7 @@ The product evolves in four deliberate stages:
 1. **Bootstrap and validate** -- reliably harden fresh Linux servers *(done)*
 2. **Agent pivot** -- move provisioning logic onto the target server *(v0.3)*
 3. **Deploy and operate** -- manage real multi-service stacks on single hosts *(v0.4--v0.6)*
-4. **Compose and scale** -- reusable blueprints and light multi-host operations *(v0.7--v0.8)*
+4. **Compose and scale** -- reusable blueprints and light multi-host operations *(v0.7--v0.10)*
 
 ---
 
@@ -478,7 +478,50 @@ At that point, `detect_os` needs to become a first-class concept:
 
 ---
 
-## v0.7 -- Light Blueprints
+## v0.7 -- Compose Hardening + Operator UX
+
+**Goal:** Self-contained deployments with no manual SSH steps after apply.
+
+| Item | Description |
+|---|---|
+| `post_deploy` steps on `compose_project` | `shell`, `container_exec`, `http_request` post-deploy actions |
+| `project.files` | Plain file uploads with no Jinja2 rendering (for workflow JSON, source files) |
+| Per-entry `mode` and `owner` | Control file permissions and ownership on all uploads |
+| `firewall.allow_ports` in bootstrap spec | Declarative custom port rules in the bootstrap firewall config |
+| `healthcheck.http_ready` | Application-level URL polling after stack deploy |
+| `loft-cli logs <host> <service>` | Stream container logs without SSH |
+| Compose rebuild detection | Detect image changes; `rebuild: true` to force rebuild |
+| `kind: package` | Declarative apt/apk package installation |
+
+**Acceptance criteria:**
+- A full stack deploy (compose up + post-deploy API calls + health checks) runs end-to-end via `loft-cli apply` with no manual SSH steps
+- File uploads respect declared `mode` and `owner`
+- `firewall.allow_ports` entries are applied and verified by goss
+- `kind: package` installs packages idempotently and is reflected in drift detection
+
+---
+
+## v0.8 -- Feature Catalog + Service Outputs
+
+**Goal:** Make loft-cli's capabilities self-documenting and machine-readable.
+
+| Item | Description |
+|---|---|
+| Catalog registry | 8th open registry with `CatalogEntry`, `StepTemplate`, `OutputTemplate` models |
+| Schema enrichment | Pydantic `Field(description=...)` on all ~70 spec schema fields |
+| `loft-cli catalog list\|show\|export` | CLI commands for catalog introspection and JSON export |
+| Condition DSL | Step template conditions (field presence, equality, boolean) |
+| Service output declarations | Connection params, paths, URLs per kind |
+| Addon-registrable entries | loft-cli-pro kinds can register their own catalog entries |
+
+**Acceptance criteria:**
+- `loft-cli catalog list` shows all registered kinds with descriptions
+- `loft-cli catalog export` produces valid JSON consumable by external tools (website, API, docs)
+- All spec schema fields have machine-readable descriptions
+
+---
+
+## v0.9 -- Light Blueprints
 
 **Goal:** Introduce reusable composition primitives for common stack patterns.
 
@@ -507,25 +550,13 @@ At that point, `detect_os` needs to become a first-class concept:
 
 ---
 
-## v0.8 -- Companion App + Multi-Host Light Operations
+## v0.10 -- Companion App + Multi-Host Light Operations
 
-**Goal:** Ship the optional companion app and support practical small-fleet workflows.
-
-### Companion App (OSS)
+**Goal:** Optional visual workflow and practical small-fleet operations.
 
 | Item | Description |
 |---|---|
-| Companion binary | Optional install for users who prefer a visual workflow over CLI |
-| Localhost HTTP listener | Companion listens on `localhost:19532` for requests |
-| Credential prompt UI | Focused dialog for entering credentials during bootstrap |
-| WireGuard detection | Detect WireGuard installation, prompt to install if missing, manage config |
-| Cross-platform auto-start | `systemd --user` (Linux), LaunchAgent (macOS) |
-| Credential store interface | Pluggable `CredentialStore` protocol with built-in transient + `.env` backends |
-
-### Multi-Host Light Operations
-
-| Item | Description |
-|---|---|
+| Companion binary | Localhost HTTP listener, credential prompt UI, WireGuard detection |
 | Multi-host inventory | Target multiple hosts via explicit list, tags, or role labels |
 | Selectors | `role=worker`, `env=staging`, `stack=automation` |
 | Sequential apply | Apply across selected hosts in order |
@@ -533,7 +564,6 @@ At that point, `detect_os` needs to become a first-class concept:
 | Failure handling | Stop on first failure or continue through all hosts |
 
 **Acceptance criteria:**
-- Companion app works on Linux and macOS as an optional alternative to CLI
 - A small fleet can be managed using one logical deployment command
 - Results are aggregated and attributable per host
 - Doctor/drift summaries available at fleet level
@@ -573,11 +603,10 @@ At that point, `detect_os` needs to become a first-class concept:
 | RFC 006 | Cross-Platform Smoke Testing and QA Gates | Adopted | v0.2 |
 | RFC 007 | Single-Host Stack Runtime Model | Planned | v0.3--v0.6 |
 | RFC 008 | Overlay / Env-File Layering for Value Resolution | Planned | v0.5 |
-| RFC 012 | Light Blueprints and Stack Composition | Planned | v0.7 |
-| RFC 013 | Multi-Host Light Operations | Planned | v0.8 |
+| RFC 012 | Light Blueprints and Stack Composition | Planned | v0.9 |
+| RFC 013 | Multi-Host Light Operations | Planned | v0.10 |
 | RFC 014 | Agent Architecture and Bootstrap Sequence | **New** | v0.3 |
 | RFC 015 | Policy Engine Design | **New** | v0.5 |
-| RFC 016 | Companion App and Credential Store | **New** | v0.8 |
 
 ---
 
@@ -608,12 +637,11 @@ The Pro variant (`loft-cli-pro`) is a separate binary distributed from self-host
 
 ## Platform Scope
 
-### Client (CLI + optional companion)
+### Client (CLI)
 
 loft-cli client runs on **Linux, macOS, and Windows**.
 
-- Linux and macOS: full support (CLI + companion)
-- Windows: companion support targeted for v1.0+; CLI works where Python is available
+- Linux, macOS, and Windows: full CLI support
 
 ### Agent (target server)
 
