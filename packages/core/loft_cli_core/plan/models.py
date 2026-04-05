@@ -35,6 +35,10 @@ class StepKind:
     GATE = "gate"  # must pass before subsequent steps that depend on it execute
     COMPOSE_HEALTH_CHECK = "compose_health_check"  # poll docker compose ps for container health
 
+    # compose_project v0.3 extensions
+    COMPOSE_HTTP_READY = "compose_http_ready"  # HTTP-level readiness poll after container health
+    POST_DEPLOY_HTTP = "post_deploy_http"  # HTTP request post-deploy action
+
     # Agent-side step kinds (v0.4) — execute locally on the managed server
     AGENT_COMMAND = "agent_command"
     AGENT_FILE_WRITE = "agent_file_write"
