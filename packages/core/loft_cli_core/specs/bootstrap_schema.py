@@ -47,12 +47,23 @@ class SSHBlock(BaseModel):
     disable_password_auth: bool = False
 
 
+class AllowPortRule(BaseModel):
+    """An additional firewall rule to allow inbound traffic on a given port."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    port: int
+    proto: str = "tcp"  # "tcp", "udp", or "any"
+    comment: str = ""  # optional UFW rule comment
+
+
 class FirewallBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     provider: str = "ufw"
     ssh_only: bool = True
     registered_peers_only: bool = False
+    allow_ports: list[AllowPortRule] = Field(default_factory=list)
     # When wireguard.enabled=true and registered_peers_only=true:
     #   SSH is restricted to the declared peer IP only (in on wg0 from {peer_ip} to any port {ssh_port})
     # When wireguard.enabled=true and registered_peers_only=false (default):
