@@ -33,9 +33,12 @@ def compose_pull(directory: str, compose_file: str, project_name: str) -> str:
     return f"bash -c 'cd {directory} && docker compose -f {compose_file} -p {project_name} pull'"
 
 
-def compose_up(directory: str, compose_file: str, project_name: str) -> str:
+def compose_up(
+    directory: str, compose_file: str, project_name: str, force_recreate: bool = False
+) -> str:
     """Start compose project in detached mode."""
-    return f"bash -c 'cd {directory} && docker compose -f {compose_file} -p {project_name} up -d'"
+    flags = "--force-recreate " if force_recreate else ""
+    return f"bash -c 'cd {directory} && docker compose -f {compose_file} -p {project_name} up -d {flags}'"
 
 
 def compose_down(directory: str, compose_file: str, project_name: str) -> str:

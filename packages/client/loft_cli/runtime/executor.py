@@ -320,9 +320,7 @@ class Executor:
                     step_id=step.id,
                     scope=step.scope.value,
                     status="success",
-                    output=(
-                        f"SSH through WireGuard tunnel verified: " f"{user}@{vpn_ip}:{port_str}"
-                    ),
+                    output=(f"SSH through WireGuard tunnel verified: {user}@{vpn_ip}:{port_str}"),
                 )
             else:
                 # Gate failed — tear down the broken tunnel
@@ -435,6 +433,147 @@ class Executor:
             scope=step.scope.value,
             status="failed",
             error=f"Invalid compose_health_check command: {step.command}",
+        )
+
+    def _execute_compose_http_ready(self, step: Step) -> StepResult:
+        """Poll an HTTP endpoint until it returns the expected status code."""
+        import time
+        import urllib.request
+        from urllib.error import URLError
+
+        if self._session is None:
+            return StepResult(
+                step_index=step.index,
+                step_id=step.id,
+                scope=step.scope.value,
+                status="success",
+                output="[dry-run or no session — http_ready skipped]",
+            )
+
+        # Command format: http_ready:<url>:<expect_status>:<timeout>:<interval>
+        if not step.command or not step.command.startswith("http_ready:"):
+            return StepResult(
+                step_index=step.index,
+                step_id=step.id,
+                scope=step.scope.value,
+                status="failed",
+                error=f"Invalid compose_http_ready command: {step.command}",
+            )
+
+        rest = step.command[len("http_ready:") :]
+        # URL may contain colons; parse from right: status, timeout, interval are integers
+        parts = rest.rsplit(":", 3)
+        if len(parts) != 4:
+            return StepResult(
+                step_index=step.index,
+                step_id=step.id,
+                scope=step.scope.value,
+                status="failed",
+                error=f"Malformed http_ready command (expected 4 parts): {step.command}",
+            )
+        url, expect_status_s, timeout_s, interval_s = parts
+        expect_status = int(expect_status_s)
+        timeout = int(timeout_s)
+        interval = int(interval_s)
+
+        deadline = time.monotonic() + timeout
+        last_code = None
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(url, timeout=interval) as resp:
+                    last_code = resp.status
+                    if last_code == expect_status:
+                        return StepResult(
+                            step_index=step.index,
+                            step_id=step.id,
+                            scope=step.scope.value,
+                            status="success",
+                            output=f"HTTP {url}: {last_code}",
+                        )
+            except URLError:
+                last_code = None
+            except Exception:
+                last_code = None
+            time.sleep(interval)
+
+        return StepResult(
+            step_index=step.index,
+            step_id=step.id,
+            scope=step.scope.value,
+            status="failed",
+            error=(
+                f"HTTP readiness check timed out after {timeout}s: "
+                f"{url} (last code: {last_code}, expected: {expect_status})"
+            ),
+        )
+
+    def _execute_post_deploy_http(self, step: Step) -> StepResult:
+        """Make an HTTP request as a post-deploy action."""
+        import urllib.request
+        from urllib.error import URLError
+
+        # Command format: post_deploy_http:<method>:<url>:<expect_status>:<body>
+        if not step.command or not step.command.startswith("post_deploy_http:"):
+            return StepResult(
+                step_index=step.index,
+                step_id=step.id,
+                scope=step.scope.value,
+                status="failed",
+                error=f"Invalid post_deploy_http command: {step.command}",
+            )
+
+        rest = step.command[len("post_deploy_http:") :]
+        # parse: method:url:expect_status:body (body may be empty)
+        parts = rest.split(":", 3)
+        if len(parts) < 3:
+            return StepResult(
+                step_index=step.index,
+                step_id=step.id,
+                scope=step.scope.value,
+                status="failed",
+                error=f"Malformed post_deploy_http command: {step.command}",
+            )
+        method = parts[0]
+        url = parts[1]
+        expect_status = int(parts[2])
+        body_str = parts[3] if len(parts) == 4 else ""
+
+        try:
+            body_bytes = body_str.encode("utf-8") if body_str else None
+            req = urllib.request.Request(url, data=body_bytes, method=method)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                actual_code = resp.status
+        except URLError as e:
+            return StepResult(
+                step_index=step.index,
+                step_id=step.id,
+                scope=step.scope.value,
+                status="failed",
+                error=f"HTTP request to {url} failed: {e}",
+            )
+        except Exception as e:
+            return StepResult(
+                step_index=step.index,
+                step_id=step.id,
+                scope=step.scope.value,
+                status="failed",
+                error=f"HTTP request error: {e}",
+            )
+
+        if actual_code == expect_status:
+            return StepResult(
+                step_index=step.index,
+                step_id=step.id,
+                scope=step.scope.value,
+                status="success",
+                output=f"{method} {url}: {actual_code}",
+            )
+        return StepResult(
+            step_index=step.index,
+            step_id=step.id,
+            scope=step.scope.value,
+            status="failed",
+            error=f"{method} {url}: got {actual_code}, expected {expect_status}",
         )
 
     def _execute_verify(self, step: Step) -> StepResult:
