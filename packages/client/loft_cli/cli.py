@@ -1209,6 +1209,105 @@ def inventory_show(
         console.print("[dim]No services recorded.[/dim]")
 
 
+# ------------------------------------------------------------------ #
+# logs
+# ------------------------------------------------------------------ #
+
+
+@app.command()
+def logs(
+    host: str | None = typer.Argument(None, help="Filter logs by target host (partial match)"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Maximum number of log entries to show"),
+    run_id: str | None = typer.Option(None, "--run", help="Show a specific run by ID or prefix"),
+) -> None:
+    """List recent apply runs, optionally filtered by host.
+
+    Pass --run <id> to show full step details for a specific run.
+    """
+    from loft_cli.logs.reader import find_log, list_logs, read_log
+
+    if run_id:
+        # Show detail for a specific run
+        log_path = find_log(run_id)
+        if not log_path:
+            from loft_cli_core.registry.local_paths import get_local_paths
+
+            log_dir = get_local_paths().log_dir
+            console.print(f"[red]Run '{run_id}' not found in {log_dir}[/red]")
+            raise typer.Exit(1)
+
+        data = read_log(log_path)
+        console.print(
+            Panel(
+                f"[bold]Spec:[/bold]    {data.get('spec_name')} ({data.get('spec_kind')})\n"
+                f"[bold]Target:[/bold]  {data.get('target_host')}\n"
+                f"[bold]Status:[/bold]  {data.get('status')}\n"
+                f"[bold]Started:[/bold] {data.get('started_at')}\n"
+                f"[bold]Finished:[/bold] {data.get('finished_at')}",
+                title=f"Run: {data.get('run_id')}",
+            )
+        )
+
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+        table.add_column("#", width=4)
+        table.add_column("Step", min_width=30)
+        table.add_column("Scope", width=8)
+        table.add_column("Status", width=10)
+        table.add_column("Duration", width=10)
+
+        for step in data.get("steps", []):
+            status = step["status"]
+            color = {"success": "green", "failed": "red", "skipped": "dim"}.get(status, "white")
+            table.add_row(
+                str(step["index"]),
+                step["id"],
+                step["scope"],
+                Text(status, style=color),
+                f"{step['duration_seconds']:.1f}s",
+            )
+
+        console.print(table)
+        return
+
+    # List recent runs
+    all_logs = list_logs()
+
+    if host:
+        all_logs = [
+            entry for entry in all_logs if host.lower() in (entry.get("target_host") or "").lower()
+        ]
+
+    all_logs = all_logs[:limit]
+
+    if not all_logs:
+        console.print("[dim]No apply runs found.[/dim]")
+        return
+
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+    table.add_column("Run ID", min_width=20)
+    table.add_column("Spec", min_width=20)
+    table.add_column("Host", min_width=15)
+    table.add_column("Status", width=12)
+    table.add_column("Started", min_width=20)
+
+    for entry in all_logs:
+        status = entry.get("status", "")
+        color = {
+            "success": "green",
+            "success_with_local_warnings": "yellow",
+            "failed": "red",
+        }.get(status, "white")
+        table.add_row(
+            entry.get("run_id", ""),
+            entry.get("spec_name", ""),
+            entry.get("target_host", ""),
+            Text(status, style=color),
+            (entry.get("started_at") or "")[:19],
+        )
+
+    console.print(table)
+
+
 if __name__ == "__main__":
     app()
 

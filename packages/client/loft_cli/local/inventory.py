@@ -445,6 +445,40 @@ def show_server(db: InventoryDB, server_id: str) -> dict | None:
     return server
 
 
+def record_package_apply(
+    db: InventoryDB,
+    spec,
+    apply_result,
+) -> None:
+    """After a package apply, record package metadata + run in inventory."""
+    import json
+
+    server_id = spec.host.name
+    status = apply_result.status
+
+    present = [p.name for p in spec.packages if p.state == "present"]
+    absent = [p.name for p in spec.packages if p.state == "absent"]
+
+    db.upsert_service(
+        server_id=server_id,
+        service_type="package",
+        service_name=f"package:{spec.meta.name}",
+        status="active" if "success" in status else "failed",
+        metadata_json=json.dumps({"installed": present, "removed": absent}),
+    )
+
+    db.record_run(
+        id=apply_result.started_at.replace(":", "-").replace("+", "Z"),
+        kind="package",
+        spec_hash=apply_result.plan.spec_hash,
+        plan_hash=apply_result.plan.plan_hash,
+        status=status,
+        started_at=apply_result.started_at,
+        finished_at=apply_result.finished_at,
+        server_id=server_id,
+    )
+
+
 def list_inventory(db: InventoryDB) -> list[dict]:
     """Return all active server records."""
     return db.list_servers()

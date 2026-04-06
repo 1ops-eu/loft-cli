@@ -451,6 +451,24 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
             tags=["firewall"],
         )
     )
+
+    # Additional allowed ports (firewall.allow_ports)
+    for rule in spec.firewall.allow_ports:
+        proto_str = rule.proto if rule.proto != "any" else ""
+        port_spec = f"{rule.port}/{proto_str}" if proto_str else str(rule.port)
+        comment_flag = f" comment '{rule.comment}'" if rule.comment else ""
+        steps.append(
+            _s(
+                f"ufw_allow_{rule.port}_{rule.proto}",
+                f"Firewall: allow {port_spec}" + (f" ({rule.comment})" if rule.comment else ""),
+                R,
+                StepKind.SSH_COMMAND,
+                command=f"ufw allow {port_spec}{comment_flag}",
+                sudo=True,
+                tags=["firewall", "allow_ports"],
+            )
+        )
+
     steps.append(
         _s(
             "ufw_force_enable",
@@ -1488,6 +1506,43 @@ def _plan_compose_project(spec: ComposeProjectSpec, ctx: NormalizedContext) -> l
             )
         )
 
+    # Upload plain files (project.files)
+    for f in p.files:
+        if f.dest.startswith("/"):
+            full_dest = f.dest
+        else:
+            full_dest = f"{p.directory}/{f.dest}"
+        safe_id = full_dest.replace("/", "_").strip("_")
+        content = ctx.plain_file_contents.get(full_dest, "")
+        steps.append(
+            _s(
+                f"upload_file_{safe_id}",
+                f"Upload file: {full_dest}",
+                R,
+                StepKind.SSH_UPLOAD,
+                file_content=content,
+                target_path=full_dest,
+                sudo=True,
+                tags=["compose", "files"],
+            )
+        )
+        # Apply ownership/permissions if non-default
+        if f.mode != "0644" or f.owner != "root" or f.group != "root":
+            steps.append(
+                _s(
+                    f"chmod_file_{safe_id}",
+                    f"Set permissions on {full_dest}: {f.mode} {f.owner}:{f.group}",
+                    R,
+                    StepKind.SSH_COMMAND,
+                    command=(
+                        f"bash -c 'chmod {f.mode} {full_dest} && "
+                        f"chown {f.owner}:{f.group} {full_dest}'"
+                    ),
+                    sudo=True,
+                    tags=["compose", "files"],
+                )
+            )
+
     # Upload compose file
     compose_dest = f"{p.directory}/{p.compose_file}"
     steps.append(
@@ -1535,10 +1590,11 @@ def _plan_compose_project(spec: ComposeProjectSpec, ctx: NormalizedContext) -> l
     steps.append(
         _s(
             "compose_up",
-            f"Start compose project '{p.name}' (detached)",
+            f"Start compose project '{p.name}' (detached)"
+            + (" [force-recreate]" if p.rebuild else ""),
             R,
             StepKind.SSH_COMMAND,
-            command=cp.compose_up(p.directory, p.compose_file, p.name),
+            command=cp.compose_up(p.directory, p.compose_file, p.name, force_recreate=p.rebuild),
             sudo=True,
             tags=["compose", "up"],
         )
@@ -1561,6 +1617,81 @@ def _plan_compose_project(spec: ComposeProjectSpec, ctx: NormalizedContext) -> l
                 tags=["compose", "health"],
             )
         )
+
+        # HTTP-level readiness check (optional, after container healthcheck)
+        # Runs on the target VM via SSH using curl, so 'localhost' refers to the target.
+        if p.healthcheck.http_ready is not None:
+            hr = p.healthcheck.http_ready
+            # Build a bash poll loop that runs on the target VM via SSH
+            http_ready_cmd = (
+                f"deadline=$(( $(date +%s) + {hr.timeout} )); "
+                f"while [ $(date +%s) -lt $deadline ]; do "
+                f"  code=$(curl -s -o /dev/null -w '%{{http_code}}' --max-time {hr.interval} '{hr.url}' 2>/dev/null || echo 0); "
+                f"  if [ \"$code\" = \"{hr.expect_status}\" ]; then echo \"HTTP {hr.url}: $code\"; exit 0; fi; "
+                f"  sleep {hr.interval}; "
+                f"done; "
+                f"echo \"HTTP readiness timed out after {hr.timeout}s: {hr.url} (last: $code)\"; exit 1"
+            )
+            steps.append(
+                _s(
+                    "compose_http_ready",
+                    f"HTTP readiness check: {hr.url} (expect {hr.expect_status}, "
+                    f"timeout={hr.timeout}s)",
+                    R,
+                    StepKind.SSH_COMMAND,
+                    command=http_ready_cmd,
+                    sudo=False,
+                    tags=["compose", "http_ready"],
+                )
+            )
+
+    # Post-deploy actions (shell, container_exec, http_request)
+    for i, action in enumerate(p.post_deploy, start=1):
+        step_id = f"post_deploy_{i}"
+        if action.type == "shell":
+            steps.append(
+                _s(
+                    step_id,
+                    f"post_deploy_{i} — shell: {action.command[:60]}",
+                    R,
+                    StepKind.SSH_COMMAND,
+                    command=f"bash -c '{action.command}'",
+                    sudo=True,
+                    tags=["compose", "post_deploy"],
+                )
+            )
+        elif action.type == "container_exec":
+            steps.append(
+                _s(
+                    step_id,
+                    f"post_deploy_{i} — container_exec {action.container}: {action.command[:50]}",
+                    R,
+                    StepKind.SSH_COMMAND,
+                    command=f"docker exec {action.container} {action.command}",
+                    sudo=True,
+                    tags=["compose", "post_deploy"],
+                )
+            )
+        elif action.type == "http_request":
+            # Run the HTTP request via SSH on the target VM using curl,
+            # so 'localhost' refers to the target, not the loft-cli client.
+            curl_data = f"-d '{action.body}'" if action.body else ""
+            post_http_cmd = (
+                f"code=$(curl -s -o /dev/null -w '%{{http_code}}' -X {action.method} {curl_data} '{action.url}'); "
+                f"if [ \"$code\" = \"{action.expect_status}\" ]; then echo \"{action.method} {action.url}: $code\"; exit 0; "
+                f"else echo \"{action.method} {action.url}: got $code expected {action.expect_status}\"; exit 1; fi"
+            )
+            steps.append(
+                _s(
+                    step_id,
+                    f"post_deploy_{i} — http_request {action.method} {action.url}",
+                    R,
+                    StepKind.SSH_COMMAND,
+                    command=post_http_cmd,
+                    sudo=False,
+                    tags=["compose", "post_deploy"],
+                )
+            )
 
     # Postflight checks
     for check in spec.checks:
@@ -2519,6 +2650,126 @@ def _plan_http_check(spec: HttpCheckSpec, ctx: NormalizedContext) -> list[Step]:
             _s(
                 "record_http_check_run",
                 "Record http_check run metadata in inventory",
+                L,
+                StepKind.LOCAL_DB_WRITE,
+                command="record_run",
+                tags=["local", "inventory"],
+            )
+        )
+
+    return steps
+
+
+def _plan_package(spec, ctx: NormalizedContext) -> list[Step]:
+    """Generate steps for installing/removing system packages."""
+    steps: list[Step] = []
+    R = StepScope.REMOTE
+    L = StepScope.LOCAL
+    V = StepScope.VERIFY
+
+    # Preflight
+    steps.append(
+        _s(
+            "preflight_connect_admin",
+            f"Verify admin SSH access to {spec.host.address}:{spec.login.port}",
+            R,
+            StepKind.SSH_COMMAND,
+            command="echo 'preflight ok'",
+            tags=["preflight"],
+        )
+    )
+
+    # Update package cache
+    if spec.update_cache:
+        steps.append(
+            _s(
+                "apt_update",
+                "Update apt package index",
+                R,
+                StepKind.SSH_COMMAND,
+                command="apt-get update -y",
+                sudo=True,
+                tags=["packages", "apt"],
+            )
+        )
+
+    # Install / remove packages
+    present = [p for p in spec.packages if p.state == "present"]
+    absent = [p for p in spec.packages if p.state == "absent"]
+
+    if present:
+        pkg_specs = []
+        for p in present:
+            if p.version:
+                pkg_specs.append(f"{p.name}={p.version}")
+            else:
+                pkg_specs.append(p.name)
+        pkg_list = " ".join(pkg_specs)
+        steps.append(
+            _s(
+                "apt_install_packages",
+                f"Install packages: {pkg_list[:60]}",
+                R,
+                StepKind.SSH_COMMAND,
+                command=f"apt-get install -y {pkg_list}",
+                sudo=True,
+                tags=["packages", "install"],
+            )
+        )
+
+    if absent:
+        pkg_list = " ".join(p.name for p in absent)
+        steps.append(
+            _s(
+                "apt_remove_packages",
+                f"Remove packages: {pkg_list[:60]}",
+                R,
+                StepKind.SSH_COMMAND,
+                command=f"apt-get remove -y {pkg_list}",
+                sudo=True,
+                tags=["packages", "remove"],
+            )
+        )
+
+    # Postflight checks
+    for check in spec.checks:
+        steps.append(
+            _s(
+                f"postflight_{check.type}",
+                f"Postflight check: {check.type}",
+                V,
+                StepKind.VERIFY,
+                command=_encode_check_command(check, spec),
+                tags=["postflight", check.type],
+            )
+        )
+
+    # Local inventory
+    if spec.local.inventory.enabled:
+        steps.append(
+            _s(
+                "open_or_init_local_inventory",
+                "Open or initialize local inventory database",
+                L,
+                StepKind.LOCAL_DB_WRITE,
+                command="init_inventory",
+                tags=["local", "inventory"],
+            )
+        )
+        steps.append(
+            _s(
+                "update_package_metadata",
+                f"Update package metadata in inventory for {spec.host.name}",
+                L,
+                StepKind.LOCAL_DB_WRITE,
+                command="upsert_services",
+                tags=["local", "inventory"],
+            )
+        )
+        steps.append(
+            _s(
+                "record_package_run",
+                "Record package run metadata in inventory",
                 L,
                 StepKind.LOCAL_DB_WRITE,
                 command="record_run",

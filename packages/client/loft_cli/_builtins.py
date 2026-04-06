@@ -26,6 +26,7 @@ def _register_specs() -> None:
     from loft_cli_core.specs.compose_project_schema import ComposeProjectSpec
     from loft_cli_core.specs.file_template_schema import FileTemplateSpec
     from loft_cli_core.specs.http_check_schema import HttpCheckSpec
+    from loft_cli_core.specs.package_schema import PackageSpec
     from loft_cli_core.specs.postgres_ensure_schema import PostgresEnsureSpec
     from loft_cli_core.specs.service_schema import ServiceSpec
     from loft_cli_core.specs.stack_schema import StackSpec
@@ -42,6 +43,7 @@ def _register_specs() -> None:
     register_spec_kind("systemd_unit", SystemdUnitSpec)
     register_spec_kind("systemd_timer", SystemdTimerSpec)
     register_spec_kind("postgres_ensure", PostgresEnsureSpec)
+    register_spec_kind("package", PackageSpec)
 
 
 def _register_normalizers() -> None:
@@ -51,6 +53,7 @@ def _register_normalizers() -> None:
         _normalize_compose_project,
         _normalize_file_template,
         _normalize_http_check,
+        _normalize_package,
         _normalize_postgres_ensure,
         _normalize_service,
         _normalize_stack,
@@ -69,6 +72,7 @@ def _register_normalizers() -> None:
     register_normalizer("postgres_ensure", _normalize_postgres_ensure)
     register_normalizer("systemd_unit", _normalize_systemd_unit)
     register_normalizer("systemd_timer", _normalize_systemd_timer)
+    register_normalizer("package", _normalize_package)
 
 
 def _register_validators() -> None:
@@ -79,6 +83,7 @@ def _register_validators() -> None:
         validate_compose_project,
         validate_file_template,
         validate_http_check,
+        validate_package,
         validate_postgres_ensure,
         validate_service,
         validate_stack,
@@ -96,6 +101,7 @@ def _register_validators() -> None:
     register_validator("postgres_ensure", validate_postgres_ensure)
     register_validator("systemd_unit", validate_systemd_unit)
     register_validator("systemd_timer", validate_systemd_timer)
+    register_validator("package", validate_package)
 
 
 def _register_planners() -> None:
@@ -105,6 +111,7 @@ def _register_planners() -> None:
         _plan_compose_project,
         _plan_file_template,
         _plan_http_check,
+        _plan_package,
         _plan_postgres_ensure,
         _plan_service,
         _plan_stack,
@@ -123,6 +130,7 @@ def _register_planners() -> None:
     register_planner("postgres_ensure", _plan_postgres_ensure)
     register_planner("systemd_unit", _plan_systemd_unit)
     register_planner("systemd_timer", _plan_systemd_timer)
+    register_planner("package", _plan_package)
 
 
 def _register_step_handlers() -> None:
@@ -146,6 +154,14 @@ def _register_step_handlers() -> None:
         StepKind.COMPOSE_HEALTH_CHECK,
         lambda ex, step: ex._execute_compose_health_check(step),
     )
+    register_step_handler(
+        StepKind.COMPOSE_HTTP_READY,
+        lambda ex, step: ex._execute_compose_http_ready(step),
+    )
+    register_step_handler(
+        StepKind.POST_DEPLOY_HTTP,
+        lambda ex, step: ex._execute_post_deploy_http(step),
+    )
 
 
 def _register_hooks() -> None:
@@ -155,6 +171,7 @@ def _register_hooks() -> None:
         record_compose_project_apply,
         record_file_template_apply,
         record_http_check_apply,
+        record_package_apply,
         record_postgres_ensure_apply,
         record_service_apply,
         record_stack_apply,
@@ -241,6 +258,14 @@ def _register_hooks() -> None:
             needs_key_generation=False,
             ssh_port_fallback=False,
             on_inventory_record=record_systemd_timer_apply,
+        ),
+    )
+    register_kind_hooks(
+        "package",
+        KindHooks(
+            needs_key_generation=False,
+            ssh_port_fallback=False,
+            on_inventory_record=record_package_apply,
         ),
     )
 

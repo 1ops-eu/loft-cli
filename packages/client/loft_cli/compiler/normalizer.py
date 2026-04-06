@@ -46,6 +46,7 @@ class NormalizedContext:
     rendered_templates: dict[str, str] = field(default_factory=dict)  # dest -> rendered content
     template_hashes: dict[str, str] = field(default_factory=dict)  # dest -> sha256 of content
     compose_file_content: str = ""  # raw or rendered compose file content
+    plain_file_contents: dict[str, str] = field(default_factory=dict)  # dest -> raw file content
 
     # Bootstrap-specific resolved values
     pubkey_contents: list[str] = field(default_factory=list)
@@ -369,6 +370,18 @@ def _normalize_compose_project(spec: ComposeProjectSpec, ctx: NormalizedContext)
     else:
         ctx.compose_file_content = f"<compose file not found: {compose_path}>"
 
+    # Read plain files (project.files)
+    for f in p.files:
+        src_path = resolve_path(f.src, spec_dir)
+        if f.dest.startswith("/"):
+            full_dest = f.dest
+        else:
+            full_dest = f"{p.directory}/{f.dest}"
+        if src_path.exists():
+            ctx.plain_file_contents[full_dest] = src_path.read_text(encoding="utf-8")
+        else:
+            ctx.plain_file_contents[full_dest] = f"<file not found: {src_path}>"
+
 
 def _normalize_postgres_ensure(spec: PostgresEnsureSpec, ctx: NormalizedContext) -> None:
     """Normalize a postgres_ensure spec: resolve login, paths, passwords."""
@@ -463,4 +476,18 @@ def _normalize_stack(spec: StackSpec, ctx: NormalizedContext) -> None:
     ctx.login_password = spec.login.password or None
 
     # Resolve inventory (state_dir-aware)
+    ctx.db_path = _resolve_db_path(spec)
+
+
+def _normalize_package(spec, ctx: NormalizedContext) -> None:
+    """Normalize a package spec: resolve login, paths, state_dir."""
+    spec_dir = ctx.spec_dir
+
+    _apply_state_dir(spec)
+
+    ctx.login_key_path = (
+        resolve_path(spec.login.private_key, spec_dir) if spec.login.private_key else None
+    )
+    ctx.login_password = spec.login.password or None
+
     ctx.db_path = _resolve_db_path(spec)

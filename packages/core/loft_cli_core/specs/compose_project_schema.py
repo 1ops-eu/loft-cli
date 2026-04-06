@@ -6,7 +6,7 @@ pull images, start the stack, and verify container health.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,12 +38,76 @@ class ManagedDirectoryBlock(BaseModel):
     group: str = "root"
 
 
+class PlainFileBlock(BaseModel):
+    """A plain file to upload verbatim (no Jinja2 rendering)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    src: str  # local file path (spec-relative)
+    dest: str  # destination path (relative to project directory or absolute)
+    mode: str = "0644"
+    owner: str = "root"
+    group: str = "root"
+
+
+class HttpReadyCheck(BaseModel):
+    """HTTP-level readiness check — poll a URL until it returns the expected status."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    expect_status: int = 200
+    timeout: int = 120
+    interval: int = 5
+
+
 class ComposeHealthCheckBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
     timeout: int = 120  # total seconds to wait for all containers healthy
     interval: int = 5  # seconds between polls
+    http_ready: HttpReadyCheck | None = None
+
+
+# ── Post-deploy action models ──────────────────────────────────────────────────
+
+
+class PostDeployShellAction(BaseModel):
+    """Run a shell command on the remote host after the stack is up."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["shell"]
+    command: str
+
+
+class PostDeployContainerExecAction(BaseModel):
+    """Run a command inside a running container after the stack is up."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["container_exec"]
+    container: str
+    command: str
+
+
+class PostDeployHttpRequestAction(BaseModel):
+    """Make an HTTP request to the deployed service after the stack is up."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["http_request"]
+    method: str = "GET"
+    url: str
+    body: str | None = None
+    expect_status: int = 200
+
+
+PostDeployAction = Annotated[
+    PostDeployShellAction | PostDeployContainerExecAction | PostDeployHttpRequestAction,
+    Field(discriminator="type"),
+]
 
 
 class ComposeProjectLoginBlock(BaseModel):
@@ -73,10 +137,13 @@ class ComposeProjectBlock(BaseModel):
     directory: str  # remote base directory (absolute)
     compose_file: str = "docker-compose.yml"  # compose filename (in project dir or spec-relative)
     templates: list[ComposeTemplateBlock] = Field(default_factory=list)
+    files: list[PlainFileBlock] = Field(default_factory=list)
     variables: dict[str, str] = Field(default_factory=dict)
     directories: list[ManagedDirectoryBlock] = Field(default_factory=list)
     pull_before_up: bool = True
+    rebuild: bool = False  # force --force-recreate on docker compose up
     healthcheck: ComposeHealthCheckBlock = Field(default_factory=ComposeHealthCheckBlock)
+    post_deploy: list[PostDeployAction] = Field(default_factory=list)
 
 
 class ComposeProjectSpec(BaseModel):

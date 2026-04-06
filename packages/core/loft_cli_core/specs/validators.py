@@ -820,3 +820,37 @@ def validate_spec(spec) -> list[ValidationIssue]:
 
 def has_errors(issues: list[ValidationIssue]) -> bool:
     return any(i.severity == "error" for i in issues)
+
+
+def validate_package(spec) -> list[ValidationIssue]:
+    """Validate a package spec."""
+    issues: list[ValidationIssue] = []
+
+    if not spec.packages:
+        issues.append(
+            ValidationIssue(
+                "error",
+                "packages",
+                "At least one package entry is required",
+            )
+        )
+
+    for entry in spec.packages:
+        if not entry.name or not entry.name.strip():
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "packages[].name",
+                    "Package name must not be empty",
+                )
+            )
+        if entry.state not in ("present", "absent"):
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "packages[].state",
+                    f"Invalid state '{entry.state}': must be 'present' or 'absent'",
+                )
+            )
+
+    return issues
