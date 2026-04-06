@@ -1,0 +1,59 @@
+kind: compose_project
+
+meta:
+  name: webapp-with-post-deploy
+  description: >
+    Deploy an httpd+redis stack with plain file upload, http_ready check,
+    post_deploy actions, and rebuild detection (v0.7 features).
+
+host:
+  name: prod-node-1
+  address: 203.0.113.10
+  os_family: debian
+
+login:
+  user: admin
+  private_key: ~/.ssh/id_ed25519
+  port: 2222
+
+project:
+  name: webapp
+  directory: /opt/webapp
+
+  compose_file: docker-compose.yml
+
+  files:
+    - src: config/robots.txt
+      dest: robots.txt
+      mode: "0644"
+      owner: root
+      group: root
+
+  pull_before_up: true
+  rebuild: false
+
+  healthcheck:
+    enabled: true
+    timeout: 120
+    interval: 5
+    http_ready:
+      url: http://localhost:8080/
+      expect_status: 200
+      timeout: 90
+      interval: 3
+
+  post_deploy:
+    - type: shell
+      command: "echo deploy-complete >> /var/log/webapp-deploys.log"
+    - type: container_exec
+      container: webapp-app-1
+      command: "httpd -v"
+    - type: http_request
+      method: GET
+      url: "http://localhost:8080/"
+      expect_status: 200
+
+local:
+  inventory:
+    enabled: true
+    db_path: ~/.loft-cli/inventory.db

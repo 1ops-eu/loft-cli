@@ -1,0 +1,32 @@
+kind: package
+
+meta:
+  name: system-tools
+  description: Install common operator tools on a bootstrapped server
+
+host:
+  name: prod-node-1
+  address: 203.0.113.10
+  os_family: debian
+
+login:
+  user: admin
+  private_key: ~/.ssh/id_ed25519
+  port: 2222
+
+packages:
+  - name: curl
+    state: present
+  - name: jq
+    state: present
+  - name: htop
+    state: present
+  - name: ncdu
+    state: present
+
+update_cache: true
+
+local:
+  inventory:
+    enabled: true
+    db_path: ~/.loft-cli/inventory.db
