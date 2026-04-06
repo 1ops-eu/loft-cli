@@ -24,11 +24,21 @@ class TimerConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    timer_name: str  # name (without .timer suffix)
-    description: str = ""
-    on_calendar: str  # systemd calendar expression, e.g. "*-*-* 02:00:00"
-    persistent: bool = True  # run missed events on boot
-    accuracy_sec: str = "1min"
+    timer_name: str = Field(
+        description="Timer unit name without the .timer suffix, e.g. 'backup-db'."
+    )
+    description: str = Field(
+        default="", description="Human-readable description used in the .timer unit file."
+    )
+    on_calendar: str = Field(
+        description="Systemd OnCalendar expression for scheduling, e.g. '*-*-* 02:00:00'."
+    )
+    persistent: bool = Field(
+        default=True, description="Set to true to run missed timer events on the next boot."
+    )
+    accuracy_sec: str = Field(
+        default="1min", description="Systemd AccuracySec value; controls scheduling precision."
+    )
 
 
 class TimerServiceConfig(BaseModel):
@@ -36,11 +46,16 @@ class TimerServiceConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    exec_start: str  # command to run
-    user: str = "root"
-    group: str = "root"
-    working_directory: str | None = None
-    environment: dict[str, str] = Field(default_factory=dict)
+    exec_start: str = Field(description="Command to execute when the timer fires.")
+    user: str = Field(default="root", description="OS user to run the timer service as.")
+    group: str = Field(default="root", description="OS group to run the timer service as.")
+    working_directory: str | None = Field(
+        default=None, description="Working directory for the timer service process."
+    )
+    environment: dict[str, str] = Field(
+        default_factory=dict,
+        description="Environment variables to set for the timer service process.",
+    )
 
 
 class SystemdTimerLoginBlock(BaseModel):
@@ -48,17 +63,27 @@ class SystemdTimerLoginBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    user: str = "admin"
-    private_key: str = "~/.ssh/id_ed25519"
-    password: str | None = None
-    port: int = 2222
+    user: str = Field(default="admin", description="SSH username for connecting to the server.")
+    private_key: str = Field(
+        default="~/.ssh/id_ed25519", description="Path to the SSH private key for this connection."
+    )
+    password: str | None = Field(
+        default=None, description="SSH password. Use only when key auth is not available."
+    )
+    port: int = Field(
+        default=2222, description="SSH port on the server (post-bootstrap default is 2222)."
+    )
 
 
 class SystemdTimerLocalBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    state_dir: str = ""
-    inventory: InventoryBlock = Field(default_factory=InventoryBlock)
+    state_dir: str = Field(
+        default="", description="Override the local state directory. Defaults to ~/.loft-cli/."
+    )
+    inventory: InventoryBlock = Field(
+        default_factory=InventoryBlock, description="Controls local inventory database recording."
+    )
 
 
 class SystemdTimerSpec(BaseModel):

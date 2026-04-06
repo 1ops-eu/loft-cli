@@ -30,17 +30,27 @@ class StackLoginBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    user: str = "admin"
-    private_key: str = "~/.ssh/id_ed25519"
-    password: str | None = None
-    port: int = 2222
+    user: str = Field(default="admin", description="SSH username for connecting to the server.")
+    private_key: str = Field(
+        default="~/.ssh/id_ed25519", description="Path to the SSH private key for this connection."
+    )
+    password: str | None = Field(
+        default=None, description="SSH password. Use only when key auth is not available."
+    )
+    port: int = Field(
+        default=2222, description="SSH port on the server (post-bootstrap default is 2222)."
+    )
 
 
 class StackLocalBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    state_dir: str = ""
-    inventory: InventoryBlock = Field(default_factory=InventoryBlock)
+    state_dir: str = Field(
+        default="", description="Override the local state directory. Defaults to ~/.loft-cli/."
+    )
+    inventory: InventoryBlock = Field(
+        default_factory=InventoryBlock, description="Controls local inventory database recording."
+    )
 
 
 class StackResourceBlock(BaseModel):
@@ -54,10 +64,17 @@ class StackResourceBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str  # unique within the stack, e.g. "traefik-config"
-    kind: str  # the spec kind: "file_template", "compose_project", etc.
-    config: dict = Field(default_factory=dict)  # kind-specific config block
-    depends_on: list[str] = Field(default_factory=list)  # other resource names
+    name: str = Field(description="Unique resource name within the stack, e.g. 'traefik-config'.")
+    kind: str = Field(
+        description="Spec kind for this resource: 'file_template', 'compose_project', etc."
+    )
+    config: dict = Field(
+        default_factory=dict, description="Kind-specific configuration block for this resource."
+    )
+    depends_on: list[str] = Field(
+        default_factory=list,
+        description="Names of other resources in this stack that must be applied first.",
+    )
 
 
 class StackSpec(BaseModel):

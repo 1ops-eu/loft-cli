@@ -24,15 +24,32 @@ class BackupSource(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["postgres_dump", "directory"]
+    type: Literal["postgres_dump", "directory"] = Field(
+        description="Backup source type: 'postgres_dump' for PostgreSQL databases, 'directory' for filesystem paths."
+    )
     # postgres_dump fields
-    database: str | None = None
-    host: str = "localhost"
-    port: int = 5432
-    user: str = "postgres"
-    docker_exec: str | None = None  # container name for docker exec
+    database: str | None = Field(
+        default=None,
+        description="PostgreSQL database name to dump. Required when type is 'postgres_dump'.",
+    )
+    host: str = Field(
+        default="localhost",
+        description="PostgreSQL server hostname. Used when type is 'postgres_dump'.",
+    )
+    port: int = Field(
+        default=5432, description="PostgreSQL port number. Used when type is 'postgres_dump'."
+    )
+    user: str = Field(
+        default="postgres",
+        description="PostgreSQL user for pg_dump. Used when type is 'postgres_dump'.",
+    )
+    docker_exec: str | None = Field(
+        default=None, description="Docker container name to run pg_dump inside via 'docker exec'."
+    )
     # directory fields
-    path: str | None = None
+    path: str | None = Field(
+        default=None, description="Filesystem path to back up. Required when type is 'directory'."
+    )
 
 
 class BackupDestination(BaseModel):
@@ -40,7 +57,7 @@ class BackupDestination(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    path: str  # local directory for backups
+    path: str = Field(description="Local directory on the server where backup files are stored.")
 
 
 class BackupRetention(BaseModel):
@@ -48,7 +65,10 @@ class BackupRetention(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    count: int = 7  # keep N most recent backups
+    count: int = Field(
+        default=7,
+        description="Number of most recent backup files to keep. Older files are deleted automatically.",
+    )
 
 
 class BackupJobConfig(BaseModel):
@@ -56,11 +76,23 @@ class BackupJobConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str  # job name (used for script/timer naming)
-    source: BackupSource
-    destination: BackupDestination
-    retention: BackupRetention = Field(default_factory=BackupRetention)
-    schedule: str = "*-*-* 02:00:00"  # systemd OnCalendar expression
+    name: str = Field(
+        description="Job name used for script and systemd timer naming, e.g. 'postgres-daily'."
+    )
+    source: BackupSource = Field(
+        description="Source to back up: a PostgreSQL database or a filesystem directory."
+    )
+    destination: BackupDestination = Field(
+        description="Destination directory where backup files are stored on the server."
+    )
+    retention: BackupRetention = Field(
+        default_factory=BackupRetention,
+        description="Retention policy controlling how many old backups to keep.",
+    )
+    schedule: str = Field(
+        default="*-*-* 02:00:00",
+        description="Systemd OnCalendar expression for backup scheduling, e.g. '*-*-* 02:00:00' for 2am daily.",
+    )
 
 
 class BackupJobLoginBlock(BaseModel):
@@ -68,17 +100,27 @@ class BackupJobLoginBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    user: str = "admin"
-    private_key: str = "~/.ssh/id_ed25519"
-    password: str | None = None
-    port: int = 2222
+    user: str = Field(default="admin", description="SSH username for connecting to the server.")
+    private_key: str = Field(
+        default="~/.ssh/id_ed25519", description="Path to the SSH private key for this connection."
+    )
+    password: str | None = Field(
+        default=None, description="SSH password. Use only when key auth is not available."
+    )
+    port: int = Field(
+        default=2222, description="SSH port on the server (post-bootstrap default is 2222)."
+    )
 
 
 class BackupJobLocalBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    state_dir: str = ""
-    inventory: InventoryBlock = Field(default_factory=InventoryBlock)
+    state_dir: str = Field(
+        default="", description="Override the local state directory. Defaults to ~/.loft-cli/."
+    )
+    inventory: InventoryBlock = Field(
+        default_factory=InventoryBlock, description="Controls local inventory database recording."
+    )
 
 
 class BackupJobSpec(BaseModel):

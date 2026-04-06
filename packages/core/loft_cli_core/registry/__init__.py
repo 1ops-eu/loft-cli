@@ -25,6 +25,15 @@ load_addons() is idempotent — subsequent calls are no-ops.
 
 from __future__ import annotations
 
+from loft_cli_core.registry.catalog import (
+    CatalogEntry,
+    OutputTemplate,
+    StepTemplate,
+    get_catalog_entry,
+    list_catalog_entries,
+    register_catalog_entry,
+)
+from loft_cli_core.registry.conditions import evaluate_condition
 from loft_cli_core.registry.executors import get_step_handler, register_step_handler
 from loft_cli_core.registry.hooks import KindHooks, get_kind_hooks, register_kind_hooks
 from loft_cli_core.registry.local_paths import (
@@ -67,6 +76,15 @@ __all__ = [
     "register_local_paths",
     "get_local_paths",
     "LocalPathsConfig",
+    # Catalog registry (8th registry)
+    "register_catalog_entry",
+    "get_catalog_entry",
+    "list_catalog_entries",
+    "CatalogEntry",
+    "StepTemplate",
+    "OutputTemplate",
+    # Condition DSL
+    "evaluate_condition",
     # Addon loader
     "load_addons",
 ]

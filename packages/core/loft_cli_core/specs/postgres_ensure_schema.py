@@ -25,10 +25,16 @@ class PgConnection(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    host: str = "localhost"
-    port: int = 5432
-    admin_user: str = "postgres"
-    docker_exec: str | None = None  # container name for docker exec
+    host: str = Field(default="localhost", description="Hostname or IP of the PostgreSQL server.")
+    port: int = Field(default=5432, description="PostgreSQL port number.")
+    admin_user: str = Field(
+        default="postgres",
+        description="PostgreSQL superuser account used to create roles and databases.",
+    )
+    docker_exec: str | None = Field(
+        default=None,
+        description="Docker container name to run psql inside via 'docker exec'. Overrides host/port when set.",
+    )
 
 
 class PgUser(BaseModel):
@@ -36,8 +42,11 @@ class PgUser(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str
-    password_env: str | None = None  # env var holding password (resolved at plan time)
+    name: str = Field(description="PostgreSQL role/user name to ensure exists.")
+    password_env: str | None = Field(
+        default=None,
+        description="Environment variable name holding the password for this role. Resolved at plan time.",
+    )
 
 
 class PgDatabase(BaseModel):
@@ -45,8 +54,10 @@ class PgDatabase(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str
-    owner: str = "postgres"
+    name: str = Field(description="PostgreSQL database name to ensure exists.")
+    owner: str = Field(
+        default="postgres", description="PostgreSQL role to set as the database owner."
+    )
 
 
 class PgExtension(BaseModel):
@@ -54,8 +65,10 @@ class PgExtension(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str
-    database: str
+    name: str = Field(
+        description="PostgreSQL extension name to install, e.g. 'pgcrypto' or 'uuid-ossp'."
+    )
+    database: str = Field(description="Database to install the extension in.")
 
 
 class PgGrant(BaseModel):
@@ -63,9 +76,11 @@ class PgGrant(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    privilege: str  # ALL, SELECT, INSERT, etc.
-    on_database: str
-    to_user: str
+    privilege: str = Field(
+        description="Privilege to grant: ALL, SELECT, INSERT, UPDATE, DELETE, etc."
+    )
+    on_database: str = Field(description="Database to grant the privilege on.")
+    to_user: str = Field(description="PostgreSQL role to grant the privilege to.")
 
 
 class PostgresEnsureLoginBlock(BaseModel):
@@ -73,17 +88,27 @@ class PostgresEnsureLoginBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    user: str = "admin"
-    private_key: str = "~/.ssh/id_ed25519"
-    password: str | None = None
-    port: int = 2222
+    user: str = Field(default="admin", description="SSH username for connecting to the server.")
+    private_key: str = Field(
+        default="~/.ssh/id_ed25519", description="Path to the SSH private key for this connection."
+    )
+    password: str | None = Field(
+        default=None, description="SSH password. Use only when key auth is not available."
+    )
+    port: int = Field(
+        default=2222, description="SSH port on the server (post-bootstrap default is 2222)."
+    )
 
 
 class PostgresEnsureLocalBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    state_dir: str = ""
-    inventory: InventoryBlock = Field(default_factory=InventoryBlock)
+    state_dir: str = Field(
+        default="", description="Override the local state directory. Defaults to ~/.loft-cli/."
+    )
+    inventory: InventoryBlock = Field(
+        default_factory=InventoryBlock, description="Controls local inventory database recording."
+    )
 
 
 class PostgresEnsureSpec(BaseModel):

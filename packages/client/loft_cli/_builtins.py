@@ -17,6 +17,7 @@ def _register_builtins() -> None:
     _register_planners()
     _register_step_handlers()
     _register_hooks()
+    _register_catalog_entries()
 
 
 def _register_specs() -> None:
@@ -266,6 +267,303 @@ def _register_hooks() -> None:
             needs_key_generation=False,
             ssh_port_fallback=False,
             on_inventory_record=record_package_apply,
+        ),
+    )
+
+
+def _extract_fields_from_model(model_class: type, prefix: str = "") -> list[dict]:
+    """Recursively extract field metadata from a Pydantic v2 model class.
+
+    Returns a flat list of dicts with keys: name, type, required, description.
+    Nested block fields are recursively expanded with dot-notation names.
+    """
+    fields: list[dict] = []
+    try:
+        model_fields = model_class.model_fields
+    except AttributeError:
+        return fields
+
+    for field_name, field_info in model_fields.items():
+        full_name = f"{prefix}.{field_name}" if prefix else field_name
+        annotation = field_info.annotation
+        required = field_info.is_required()
+        description = field_info.description or ""
+
+        # Try to get a clean type string
+        try:
+            if hasattr(annotation, "__origin__"):
+                type_str = str(annotation)
+                # Simplify common annotations
+                type_str = type_str.replace("typing.", "").replace("Optional[", "").rstrip("]")
+            elif annotation is None:
+                type_str = "any"
+            else:
+                type_str = getattr(annotation, "__name__", str(annotation))
+        except Exception:
+            type_str = str(annotation)
+
+        # Check if the annotation is a nested Pydantic model to expand
+        try:
+            from pydantic import BaseModel as _BaseModel
+
+            # Get the actual type (unwrap Optional/Union)
+            inner_type = annotation
+            if hasattr(annotation, "__origin__"):
+                args = getattr(annotation, "__args__", ())
+                # For Optional[X] (Union[X, None]), get X
+                non_none = [a for a in args if a is not type(None)]
+                if len(non_none) == 1:
+                    inner_type = non_none[0]
+
+            if inner_type and isinstance(inner_type, type) and issubclass(inner_type, _BaseModel):
+                # Recurse into nested model — add the block-level entry plus its fields
+                fields.append(
+                    {
+                        "name": full_name,
+                        "type": getattr(inner_type, "__name__", str(inner_type)),
+                        "required": required,
+                        "description": description,
+                    }
+                )
+                # Expand sub-fields only for required/meaningful blocks
+                sub_fields = _extract_fields_from_model(inner_type, prefix=full_name)
+                fields.extend(sub_fields)
+                continue
+        except ImportError:
+            pass
+
+        fields.append(
+            {
+                "name": full_name,
+                "type": type_str,
+                "required": required,
+                "description": description,
+            }
+        )
+
+    return fields
+
+
+def _register_catalog_entries() -> None:
+    """Register catalog entries for all built-in kinds with outputs and field metadata."""
+    from loft_cli_core.registry.catalog import (
+        CatalogEntry,
+        OutputTemplate,
+        register_catalog_entry,
+    )
+    from loft_cli_core.specs.backup_job_schema import BackupJobSpec
+    from loft_cli_core.specs.bootstrap_schema import BootstrapSpec
+    from loft_cli_core.specs.compose_project_schema import ComposeProjectSpec
+    from loft_cli_core.specs.file_template_schema import FileTemplateSpec
+    from loft_cli_core.specs.http_check_schema import HttpCheckSpec
+    from loft_cli_core.specs.package_schema import PackageSpec
+    from loft_cli_core.specs.postgres_ensure_schema import PostgresEnsureSpec
+    from loft_cli_core.specs.service_schema import ServiceSpec
+    from loft_cli_core.specs.stack_schema import StackSpec
+    from loft_cli_core.specs.systemd_timer_schema import SystemdTimerSpec
+    from loft_cli_core.specs.systemd_unit_schema import SystemdUnitSpec
+
+    # bootstrap
+    register_catalog_entry(
+        "bootstrap",
+        CatalogEntry(
+            kind="bootstrap",
+            description=(
+                "Harden a fresh Debian/Ubuntu host: SSH hardening, firewall, "
+                "admin user setup, and optional WireGuard VPN."
+            ),
+            fields=_extract_fields_from_model(BootstrapSpec),
+            outputs=[
+                OutputTemplate(
+                    name="ssh_alias",
+                    description="SSH Host alias to connect to this host after bootstrap.",
+                    example="ssh {provider}--{host.name}  # e.g. ssh hetzner--dev-vps",
+                ),
+                OutputTemplate(
+                    name="ssh_port",
+                    description="SSH port as configured by the bootstrap spec.",
+                    example="2222",
+                ),
+            ],
+        ),
+    )
+
+    # service
+    register_catalog_entry(
+        "service",
+        CatalogEntry(
+            kind="service",
+            description=(
+                "Install and configure services on a bootstrapped host: "
+                "PostgreSQL, Nginx, Docker, and individual containers."
+            ),
+            fields=_extract_fields_from_model(ServiceSpec),
+            outputs=[
+                OutputTemplate(
+                    name="postgres_host",
+                    description="Hostname of the PostgreSQL server (when postgres is enabled).",
+                    example="localhost",
+                ),
+                OutputTemplate(
+                    name="postgres_port",
+                    description="Port PostgreSQL is listening on (when postgres is enabled).",
+                    example="5432",
+                ),
+                OutputTemplate(
+                    name="postgres_database",
+                    description="Name of the created database (when postgres.create_database is set).",
+                    example="{postgres.create_database.name}  # e.g. myapp",
+                ),
+                OutputTemplate(
+                    name="postgres_user",
+                    description="Name of the created role (when postgres.create_role is set).",
+                    example="{postgres.create_role.name}  # e.g. myapp_user",
+                ),
+                OutputTemplate(
+                    name="nginx_site_url",
+                    description="URL of the configured Nginx site (when nginx sites are declared).",
+                    example="http://{nginx.sites[0].domain}",
+                ),
+            ],
+        ),
+    )
+
+    # file_template
+    register_catalog_entry(
+        "file_template",
+        CatalogEntry(
+            kind="file_template",
+            description=(
+                "Render Jinja2 templates and upload managed configuration files to a remote host."
+            ),
+            fields=_extract_fields_from_model(FileTemplateSpec),
+        ),
+    )
+
+    # compose_project
+    register_catalog_entry(
+        "compose_project",
+        CatalogEntry(
+            kind="compose_project",
+            description=(
+                "Deploy a Docker Compose project: upload files, pull images, "
+                "start the stack, and verify health."
+            ),
+            fields=_extract_fields_from_model(ComposeProjectSpec),
+            outputs=[
+                OutputTemplate(
+                    name="project_dir",
+                    description="Remote directory where the compose project files are uploaded.",
+                    example="{project.directory}  # e.g. /opt/myapp",
+                ),
+            ],
+        ),
+    )
+
+    # stack
+    register_catalog_entry(
+        "stack",
+        CatalogEntry(
+            kind="stack",
+            description=(
+                "Group related resources into a single deployable application boundary, "
+                "executed in dependency order."
+            ),
+            fields=_extract_fields_from_model(StackSpec),
+        ),
+    )
+
+    # http_check
+    register_catalog_entry(
+        "http_check",
+        CatalogEntry(
+            kind="http_check",
+            description=(
+                "GET-only HTTP readiness probe with configurable retry and timeout. "
+                "Usable as a dependency gate in stacks."
+            ),
+            fields=_extract_fields_from_model(HttpCheckSpec),
+        ),
+    )
+
+    # backup_job
+    register_catalog_entry(
+        "backup_job",
+        CatalogEntry(
+            kind="backup_job",
+            description=(
+                "Define host-local backup operations (PostgreSQL dumps or directory backups) "
+                "with retention and scheduling via systemd timer."
+            ),
+            fields=_extract_fields_from_model(BackupJobSpec),
+        ),
+    )
+
+    # systemd_unit
+    register_catalog_entry(
+        "systemd_unit",
+        CatalogEntry(
+            kind="systemd_unit",
+            description=(
+                "Deploy and manage a host-native systemd service from structured declarations."
+            ),
+            fields=_extract_fields_from_model(SystemdUnitSpec),
+            outputs=[
+                OutputTemplate(
+                    name="unit_name",
+                    description="The .service unit name as installed on the server.",
+                    example="{unit.unit_name}.service  # e.g. myapp.service",
+                ),
+            ],
+        ),
+    )
+
+    # systemd_timer
+    register_catalog_entry(
+        "systemd_timer",
+        CatalogEntry(
+            kind="systemd_timer",
+            description=(
+                "Deploy scheduled execution via systemd timers: generates a .timer "
+                "and companion oneshot .service unit."
+            ),
+            fields=_extract_fields_from_model(SystemdTimerSpec),
+        ),
+    )
+
+    # postgres_ensure
+    register_catalog_entry(
+        "postgres_ensure",
+        CatalogEntry(
+            kind="postgres_ensure",
+            description=(
+                "Ensure PostgreSQL resources exist: users, databases, extensions, "
+                "and privilege grants."
+            ),
+            fields=_extract_fields_from_model(PostgresEnsureSpec),
+            outputs=[
+                OutputTemplate(
+                    name="database_url",
+                    description="Connection string for the ensured PostgreSQL database.",
+                    example=(
+                        "postgres://{users[0].name}:***@{connection.host}:"
+                        "{connection.port}/{databases[0].name}"
+                    ),
+                ),
+            ],
+        ),
+    )
+
+    # package
+    register_catalog_entry(
+        "package",
+        CatalogEntry(
+            kind="package",
+            description=(
+                "Install or remove system packages on a remote host using the "
+                "native package manager (apt, yum/dnf)."
+            ),
+            fields=_extract_fields_from_model(PackageSpec),
         ),
     )
 

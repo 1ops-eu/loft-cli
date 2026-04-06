@@ -24,11 +24,13 @@ class TemplateFileBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    src: str  # local template path (spec-relative)
-    dest: str  # remote absolute destination path
-    mode: str = "0644"  # file permissions (octal string)
-    owner: str = "root"
-    group: str = "root"
+    src: str = Field(description="Local Jinja2 template path relative to the spec file.")
+    dest: str = Field(description="Absolute remote path where the rendered file is uploaded.")
+    mode: str = Field(
+        default="0644", description="File permissions as an octal string, e.g. '0644'."
+    )
+    owner: str = Field(default="root", description="OS user that owns the uploaded file.")
+    group: str = Field(default="root", description="OS group that owns the uploaded file.")
 
 
 class FileTemplateLoginBlock(BaseModel):
@@ -36,17 +38,27 @@ class FileTemplateLoginBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    user: str = "admin"
-    private_key: str = "~/.ssh/id_ed25519"
-    password: str | None = None
-    port: int = 2222
+    user: str = Field(default="admin", description="SSH username for connecting to the server.")
+    private_key: str = Field(
+        default="~/.ssh/id_ed25519", description="Path to the SSH private key for this connection."
+    )
+    password: str | None = Field(
+        default=None, description="SSH password. Use only when key auth is not available."
+    )
+    port: int = Field(
+        default=2222, description="SSH port on the server (post-bootstrap default is 2222)."
+    )
 
 
 class FileTemplateLocalBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    state_dir: str = ""
-    inventory: InventoryBlock = Field(default_factory=InventoryBlock)
+    state_dir: str = Field(
+        default="", description="Override the local state directory. Defaults to ~/.loft-cli/."
+    )
+    inventory: InventoryBlock = Field(
+        default_factory=InventoryBlock, description="Controls local inventory database recording."
+    )
 
 
 class FileTemplateSpec(BaseModel):
@@ -58,7 +70,11 @@ class FileTemplateSpec(BaseModel):
     meta: MetaBlock
     host: HostBlock
     login: FileTemplateLoginBlock = Field(default_factory=FileTemplateLoginBlock)
-    templates: list[TemplateFileBlock]  # at least 1 required
-    variables: dict[str, str] = Field(default_factory=dict)
+    templates: list[TemplateFileBlock] = Field(
+        description="List of Jinja2 templates to render and upload. At least one required."
+    )
+    variables: dict[str, str] = Field(
+        default_factory=dict, description="Variables available to all templates during rendering."
+    )
     local: FileTemplateLocalBlock = Field(default_factory=FileTemplateLocalBlock)
     checks: list[CheckBlock] = Field(default_factory=list)

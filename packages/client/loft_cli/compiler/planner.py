@@ -1627,10 +1627,10 @@ def _plan_compose_project(spec: ComposeProjectSpec, ctx: NormalizedContext) -> l
                 f"deadline=$(( $(date +%s) + {hr.timeout} )); "
                 f"while [ $(date +%s) -lt $deadline ]; do "
                 f"  code=$(curl -s -o /dev/null -w '%{{http_code}}' --max-time {hr.interval} '{hr.url}' 2>/dev/null || echo 0); "
-                f"  if [ \"$code\" = \"{hr.expect_status}\" ]; then echo \"HTTP {hr.url}: $code\"; exit 0; fi; "
+                f'  if [ "$code" = "{hr.expect_status}" ]; then echo "HTTP {hr.url}: $code"; exit 0; fi; '
                 f"  sleep {hr.interval}; "
                 f"done; "
-                f"echo \"HTTP readiness timed out after {hr.timeout}s: {hr.url} (last: $code)\"; exit 1"
+                f'echo "HTTP readiness timed out after {hr.timeout}s: {hr.url} (last: $code)"; exit 1'
             )
             steps.append(
                 _s(
@@ -1678,8 +1678,8 @@ def _plan_compose_project(spec: ComposeProjectSpec, ctx: NormalizedContext) -> l
             curl_data = f"-d '{action.body}'" if action.body else ""
             post_http_cmd = (
                 f"code=$(curl -s -o /dev/null -w '%{{http_code}}' -X {action.method} {curl_data} '{action.url}'); "
-                f"if [ \"$code\" = \"{action.expect_status}\" ]; then echo \"{action.method} {action.url}: $code\"; exit 0; "
-                f"else echo \"{action.method} {action.url}: got $code expected {action.expect_status}\"; exit 1; fi"
+                f'if [ "$code" = "{action.expect_status}" ]; then echo "{action.method} {action.url}: $code"; exit 0; '
+                f'else echo "{action.method} {action.url}: got $code expected {action.expect_status}"; exit 1; fi'
             )
             steps.append(
                 _s(
