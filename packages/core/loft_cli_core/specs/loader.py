@@ -12,6 +12,10 @@ import yaml
 # Matches ${...} tokens — the full token including optional prefix and default.
 _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
+# Maximum include depth to prevent runaway recursion before circular-include
+# detection fires.
+_MAX_INCLUDE_DEPTH = 10
+
 
 class SpecLoadError(Exception):
     """Raised when a spec file cannot be loaded or parsed."""
@@ -151,6 +155,108 @@ def _resolve_values(obj: Any, *, strict: bool = True, _path: str = "") -> Any:
 _resolve_env_vars = _resolve_values
 
 
+def _resolve_includes(raw: dict, base_dir: Path, *, depth: int = 0) -> dict:
+    """Resolve ``includes:`` directives in a raw YAML dict before Pydantic validation.
+
+    This function is a **no-op** for non-blueprint specs (any spec whose ``kind``
+    field is not ``"blueprint"``).
+
+    For blueprint specs it:
+    1. Iterates the ``includes`` list (each item must have an ``include`` key).
+    2. Resolves each include path relative to ``base_dir``.
+    3. Loads the included file recursively (also calling ``_resolve_includes``).
+    4. Merges the included file's ``resources`` into the parent ``resources`` list
+       (included resources come *before* the parent's inline resources, in order).
+    5. Applies the include's ``with`` bindings as input overrides on the included
+       file's ``inputs`` defaults.
+    6. Enforces a maximum depth of :data:`_MAX_INCLUDE_DEPTH`.
+
+    Parameters
+    ----------
+    raw:
+        Parsed YAML dict (before Pydantic validation).
+    base_dir:
+        Directory of the spec file being processed — used to resolve relative paths.
+    depth:
+        Current include depth (starts at 0 for the top-level file).
+    """
+    if raw.get("kind") != "blueprint":
+        # Passthrough: non-blueprint specs are unaffected.
+        return raw
+
+    if depth > _MAX_INCLUDE_DEPTH:
+        raise SpecLoadError(
+            f"Include depth exceeded maximum ({_MAX_INCLUDE_DEPTH}). "
+            "Possible circular include — run 'loft-cli validate' to diagnose."
+        )
+
+    includes_list = raw.get("includes", [])
+    if not includes_list:
+        return raw
+
+    # We'll build the merged resources list: included resources first, then inline.
+    merged_resources: list[dict] = []
+
+    for inc in includes_list:
+        if not isinstance(inc, dict):
+            continue
+        include_path_str = inc.get("include", "")
+        if not include_path_str:
+            continue
+
+        # Resolve the include path
+        include_path = Path(include_path_str)
+        if not include_path.is_absolute():
+            include_path = (base_dir / include_path_str).resolve()
+
+        if not include_path.exists():
+            raise SpecLoadError(
+                f"Include target '{include_path}' not found (referenced from '{base_dir}')"
+            )
+
+        # Load the included file (raw YAML, no env resolution yet)
+        try:
+            included_text = include_path.read_text(encoding="utf-8")
+            included_raw = yaml.safe_load(included_text)
+        except yaml.YAMLError as exc:
+            raise SpecLoadError(
+                f"YAML parse error in included file '{include_path}': {exc}"
+            ) from exc
+
+        if not isinstance(included_raw, dict):
+            raise SpecLoadError(f"Included file '{include_path}' must be a YAML mapping")
+
+        # Apply ``with`` bindings: override the included file's input defaults
+        with_bindings: dict[str, str] = inc.get("with", {})
+        if with_bindings and "inputs" in included_raw:
+            patched_inputs = []
+            for inp in included_raw["inputs"]:
+                if isinstance(inp, dict) and inp.get("name") in with_bindings:
+                    inp = dict(inp)
+                    inp["default"] = with_bindings[inp["name"]]
+                    inp["required"] = False
+                patched_inputs.append(inp)
+            included_raw["inputs"] = patched_inputs
+
+        # Recursively resolve includes in the included file
+        included_raw = _resolve_includes(
+            included_raw,
+            include_path.parent,
+            depth=depth + 1,
+        )
+
+        # Collect resources from the included file
+        merged_resources.extend(included_raw.get("resources", []))
+
+    # Append the parent's own inline resources after the included ones
+    merged_resources.extend(raw.get("resources", []))
+
+    # Return a copy of raw with merged resources (do not mutate the original)
+    result = dict(raw)
+    result["resources"] = merged_resources
+    return result
+
+
 def load_spec(
     path: Path,
     *,
@@ -218,9 +324,13 @@ def load_spec(
     for doc_idx, raw in enumerate(documents):
         if not isinstance(raw, dict):
             raise SpecLoadError(
-                f"Document {doc_idx + 1} in {path} must be a YAML mapping, "
-                f"got {type(raw).__name__}"
+                f"Document {doc_idx + 1} in {path} must be a YAML mapping, got {type(raw).__name__}"
             )
+
+        # Resolve include directives for blueprint specs before Pydantic validation.
+        # This merges included files' resources into the parent's resources list.
+        # Non-blueprint specs are unaffected (passthrough).
+        raw = _resolve_includes(raw, path.parent)
 
         kind = raw.get("kind")
         model_class = get_spec_model(kind)

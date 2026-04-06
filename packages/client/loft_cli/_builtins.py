@@ -22,6 +22,7 @@ def _register_builtins() -> None:
 def _register_specs() -> None:
     from loft_cli_core.registry.specs import register_spec_kind
     from loft_cli_core.specs.backup_job_schema import BackupJobSpec
+    from loft_cli_core.specs.blueprint_schema import BlueprintSpec
     from loft_cli_core.specs.bootstrap_schema import BootstrapSpec
     from loft_cli_core.specs.compose_project_schema import ComposeProjectSpec
     from loft_cli_core.specs.file_template_schema import FileTemplateSpec
@@ -44,11 +45,13 @@ def _register_specs() -> None:
     register_spec_kind("systemd_timer", SystemdTimerSpec)
     register_spec_kind("postgres_ensure", PostgresEnsureSpec)
     register_spec_kind("package", PackageSpec)
+    register_spec_kind("blueprint", BlueprintSpec)
 
 
 def _register_normalizers() -> None:
     from loft_cli.compiler.normalizer import (
         _normalize_backup_job,
+        _normalize_blueprint,
         _normalize_bootstrap,
         _normalize_compose_project,
         _normalize_file_template,
@@ -73,12 +76,14 @@ def _register_normalizers() -> None:
     register_normalizer("systemd_unit", _normalize_systemd_unit)
     register_normalizer("systemd_timer", _normalize_systemd_timer)
     register_normalizer("package", _normalize_package)
+    register_normalizer("blueprint", _normalize_blueprint)
 
 
 def _register_validators() -> None:
     from loft_cli_core.registry.validators import register_validator
     from loft_cli_core.specs.validators import (
         validate_backup_job,
+        validate_blueprint,
         validate_bootstrap,
         validate_compose_project,
         validate_file_template,
@@ -102,11 +107,13 @@ def _register_validators() -> None:
     register_validator("systemd_unit", validate_systemd_unit)
     register_validator("systemd_timer", validate_systemd_timer)
     register_validator("package", validate_package)
+    register_validator("blueprint", validate_blueprint)
 
 
 def _register_planners() -> None:
     from loft_cli.compiler.planner import (
         _plan_backup_job,
+        _plan_blueprint,
         _plan_bootstrap,
         _plan_compose_project,
         _plan_file_template,
@@ -131,6 +138,7 @@ def _register_planners() -> None:
     register_planner("systemd_unit", _plan_systemd_unit)
     register_planner("systemd_timer", _plan_systemd_timer)
     register_planner("package", _plan_package)
+    register_planner("blueprint", _plan_blueprint)
 
 
 def _register_step_handlers() -> None:
@@ -266,6 +274,14 @@ def _register_hooks() -> None:
             needs_key_generation=False,
             ssh_port_fallback=False,
             on_inventory_record=record_package_apply,
+        ),
+    )
+    register_kind_hooks(
+        "blueprint",
+        KindHooks(
+            needs_key_generation=False,
+            ssh_port_fallback=False,
+            on_inventory_record=record_stack_apply,  # blueprints expand like stacks
         ),
     )
 

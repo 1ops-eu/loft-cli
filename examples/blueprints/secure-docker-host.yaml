@@ -1,0 +1,70 @@
+kind: blueprint
+meta:
+  name: secure-docker-host
+  description: >
+    Bootstraps a Debian/Ubuntu host with a hardened SSH configuration and
+    installs Docker.  Parameterised over the admin username, SSH port, and
+    optional public-key paths so the blueprint can be reused across projects.
+
+host:
+  name: ${host_name}
+  address: ${host_address}
+  provider: ${provider}
+
+login:
+  user: root
+  port: 22
+
+inputs:
+  - name: host_name
+    required: true
+    description: Friendly name for the host (used in inventory records)
+
+  - name: host_address
+    required: true
+    description: IP address or hostname of the target server
+
+  - name: provider
+    required: false
+    default: unknown
+    description: Cloud provider name (hetzner, digitalocean, aws, …)
+
+  - name: admin_user
+    required: false
+    default: admin
+    description: Name of the non-root admin account to create
+
+  - name: ssh_port
+    required: false
+    default: "2222"
+    description: SSH port to use after bootstrap (avoid the default 22)
+
+  - name: pubkey_path
+    required: false
+    default: ~/.ssh/id_ed25519.pub
+    description: Local path to the SSH public key to install for the admin
+
+resources:
+  - name: bootstrap
+    kind: bootstrap
+    config:
+      admin_user:
+        name: ${admin_user}
+        pubkeys:
+          - ${pubkey_path}
+      ssh:
+        port: ${ssh_port}
+        disable_password_auth: true
+      wireguard:
+        enabled: false
+
+  - name: docker
+    kind: service
+    depends_on:
+      - bootstrap
+    config:
+      login:
+        user: ${admin_user}
+        port: ${ssh_port}
+      docker:
+        enabled: true

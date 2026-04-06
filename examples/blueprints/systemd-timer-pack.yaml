@@ -1,0 +1,71 @@
+kind: blueprint
+meta:
+  name: systemd-timer-pack
+  description: >
+    Deploys a pair of systemd units — a oneshot service and a timer — that
+    run a user-supplied shell command on a configurable schedule.  Useful for
+    lightweight cron-style jobs without requiring a full backup or compose stack.
+
+host:
+  name: ${host_name}
+  address: ${host_address}
+
+login:
+  user: ${admin_user}
+  port: ${ssh_port}
+
+inputs:
+  - name: host_name
+    required: true
+    description: Friendly name for the target host
+
+  - name: host_address
+    required: true
+    description: IP address or hostname of the target server
+
+  - name: admin_user
+    required: false
+    default: admin
+    description: SSH user on the target host
+
+  - name: ssh_port
+    required: false
+    default: "2222"
+    description: SSH port of the target host
+
+  - name: timer_name
+    required: true
+    description: Base name for the systemd unit files (e.g. my-cleanup)
+
+  - name: exec_start
+    required: true
+    description: Full command to run when the timer fires (e.g. /usr/local/bin/cleanup.sh)
+
+  - name: on_calendar
+    required: false
+    default: "daily"
+    description: systemd OnCalendar expression (e.g. "daily", "*-*-* 04:00:00")
+
+  - name: run_user
+    required: false
+    default: root
+    description: User to run the service as
+
+  - name: working_directory
+    required: false
+    default: /tmp
+    description: Working directory for the service process
+
+resources:
+  - name: timer
+    kind: systemd_timer
+    config:
+      timer:
+        timer_name: ${timer_name}
+        on_calendar: ${on_calendar}
+        persistent: true
+        description: "Scheduled job: ${timer_name}"
+      service:
+        exec_start: ${exec_start}
+        user: ${run_user}
+        working_directory: ${working_directory}

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from loft_cli_core.specs.backup_job_schema import BackupJobSpec
+from loft_cli_core.specs.blueprint_schema import BlueprintSpec
 from loft_cli_core.specs.bootstrap_schema import BootstrapSpec
 from loft_cli_core.specs.compose_project_schema import ComposeProjectSpec
 from loft_cli_core.specs.file_template_schema import FileTemplateSpec
@@ -481,6 +482,25 @@ def _normalize_stack(spec: StackSpec, ctx: NormalizedContext) -> None:
 
 def _normalize_package(spec, ctx: NormalizedContext) -> None:
     """Normalize a package spec: resolve login, paths, state_dir."""
+    spec_dir = ctx.spec_dir
+
+    _apply_state_dir(spec)
+
+    ctx.login_key_path = (
+        resolve_path(spec.login.private_key, spec_dir) if spec.login.private_key else None
+    )
+    ctx.login_password = spec.login.password or None
+
+    ctx.db_path = _resolve_db_path(spec)
+
+
+def _normalize_blueprint(spec: BlueprintSpec, ctx: NormalizedContext) -> None:
+    """Normalize a blueprint spec: resolve login, paths, state_dir.
+
+    Blueprints delegate the heavy normalization work to per-resource planners
+    at plan time (just like stacks), so the top-level normalization only needs
+    to set shared connection context used by child-resource normalizers.
+    """
     spec_dir = ctx.spec_dir
 
     _apply_state_dir(spec)

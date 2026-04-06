@@ -1,0 +1,79 @@
+kind: blueprint
+meta:
+  name: reverse-proxy-caddy
+  description: >
+    Deploys a Caddy reverse-proxy as a Docker Compose project on a
+    bootstrapped host.  Caddy handles automatic HTTPS via Let's Encrypt.
+    Parameterised over the domain, upstream address, and project directory.
+
+host:
+  name: ${host_name}
+  address: ${host_address}
+
+login:
+  user: ${admin_user}
+  port: ${ssh_port}
+
+inputs:
+  - name: host_name
+    required: true
+    description: Friendly name for the target host
+
+  - name: host_address
+    required: true
+    description: IP address or hostname of the target server
+
+  - name: admin_user
+    required: false
+    default: admin
+    description: SSH user (must have Docker access)
+
+  - name: ssh_port
+    required: false
+    default: "2222"
+    description: SSH port of the target host
+
+  - name: domain
+    required: true
+    description: Public domain name to serve (e.g. example.com)
+
+  - name: upstream
+    required: true
+    description: Upstream address Caddy should proxy to (e.g. localhost:8080)
+
+  - name: project_dir
+    required: false
+    default: /opt/caddy
+    description: Directory on the remote host where Caddy files are stored
+
+  - name: email
+    required: false
+    default: admin@example.com
+    description: Email address for Let's Encrypt certificate notifications
+
+resources:
+  - name: caddy-proxy
+    kind: compose_project
+    config:
+      project:
+        name: caddy
+        directory: ${project_dir}
+        compose_file: docker-compose.yml
+        pull_before_up: true
+        rebuild: false
+        healthcheck:
+          enabled: true
+          timeout: 60
+          interval: 5
+        templates:
+          - src: Caddyfile.j2
+            dest: Caddyfile
+        directories:
+          - path: data
+            mode: "0755"
+            owner: root
+            group: root
+          - path: config
+            mode: "0755"
+            owner: root
+            group: root
