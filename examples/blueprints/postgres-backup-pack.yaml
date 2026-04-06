@@ -1,0 +1,86 @@
+kind: blueprint
+meta:
+  name: postgres-backup-pack
+  description: >
+    Installs PostgreSQL on a host and sets up an automated pg_dump backup job
+    with systemd timer and configurable retention.  Parameterised over the
+    database name, backup schedule, destination path, and retention count.
+
+host:
+  name: ${host_name}
+  address: ${host_address}
+
+login:
+  user: ${admin_user}
+  port: ${ssh_port}
+
+inputs:
+  - name: host_name
+    required: true
+    description: Friendly name for the target host
+
+  - name: host_address
+    required: true
+    description: IP address or hostname of the target server
+
+  - name: admin_user
+    required: false
+    default: admin
+    description: SSH user on the target host
+
+  - name: ssh_port
+    required: false
+    default: "2222"
+    description: SSH port of the target host
+
+  - name: pg_version
+    required: false
+    default: "15"
+    description: PostgreSQL version to install (e.g. 15, 16)
+
+  - name: db_name
+    required: true
+    description: Name of the database to back up
+
+  - name: backup_dest
+    required: false
+    default: /var/backups/postgres
+    description: Absolute path on the remote host to store backup archives
+
+  - name: backup_schedule
+    required: false
+    default: "*-*-* 03:00:00"
+    description: systemd OnCalendar expression for the backup timer
+
+  - name: retention_count
+    required: false
+    default: "7"
+    description: Number of recent backup archives to keep
+
+resources:
+  - name: postgres
+    kind: service
+    config:
+      postgres:
+        enabled: true
+        version: ${pg_version}
+        listen_addresses: "localhost"
+
+  - name: backup-job
+    kind: backup_job
+    depends_on:
+      - postgres
+    config:
+      backup:
+        name: ${db_name}-daily
+        schedule: ${backup_schedule}
+        source:
+          type: postgres_dump
+          database: ${db_name}
+          host: localhost
+          port: 5432
+          user: postgres
+        destination:
+          path: ${backup_dest}
+        retention:
+          count: ${retention_count}

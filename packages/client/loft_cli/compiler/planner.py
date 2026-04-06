@@ -2780,6 +2780,162 @@ def _plan_package(spec, ctx: NormalizedContext) -> list[Step]:
     return steps
 
 
+def _substitute_inputs(obj, inputs: dict[str, str]):
+    """Recursively substitute ``${name}`` tokens in a dict/list/str with input values.
+
+    Args:
+        obj: The data structure to walk (dict, list, or str).
+        inputs: Mapping of input name → resolved value.
+
+    Returns:
+        A new object with all ``${name}`` tokens replaced.
+    """
+    import re
+
+    if isinstance(obj, str):
+        import re as _re
+
+        def _replace(m: _re.Match) -> str:
+            key = m.group(1)
+            val = inputs.get(key)
+            return val if val is not None else m.group(0)  # leave unresolved tokens as-is
+
+        return re.sub(r"\$\{([^}]+)\}", _replace, obj)
+    elif isinstance(obj, dict):
+        return {k: _substitute_inputs(v, inputs) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_substitute_inputs(item, inputs) for item in obj]
+    return obj
+
+
+def _plan_blueprint(spec, ctx: NormalizedContext) -> list[Step]:
+    """Plan a blueprint by substituting inputs and expanding resources.
+
+    Blueprint planning mirrors stack planning (_plan_stack) with the addition
+    of input token substitution (``${name}`` → resolved value) applied to each
+    resource's config block before delegation to per-kind planners.
+
+    Steps:
+    1. Build the resolved-inputs mapping from spec.inputs defaults.
+    2. Topologically sort spec.resources by depends_on.
+    3. For each resource: substitute inputs into config, construct a child spec,
+       normalize it, delegate to its planner, prefix step IDs, and collect steps.
+    4. Emit postflight checks and inventory steps from the top-level spec.
+    """
+    from loft_cli_core.registry import get_normalizer, get_planner, get_spec_model
+
+    R = StepScope.REMOTE
+    L = StepScope.LOCAL
+    V = StepScope.VERIFY
+
+    steps: list[Step] = []
+
+    # 1. Resolve inputs: use defaults for all declared inputs.
+    #    At plan time callers should have injected runtime values via spec.inputs[n].default.
+    resolved_inputs: dict[str, str] = {}
+    for inp in spec.inputs:
+        if inp.default is not None:
+            resolved_inputs[inp.name] = inp.default
+
+    # 2. Topological sort (reuse the same helper as _plan_stack)
+    ordered = _topo_sort(spec.resources)
+
+    for res in ordered:
+        planner_fn = get_planner(res.kind)
+        if planner_fn is None:
+            steps.append(
+                _s(
+                    f"blueprint_{res.name}_error",
+                    f"No planner for resource kind '{res.kind}'",
+                    R,
+                    StepKind.AGENT_COMMAND,
+                    command=f"echo 'ERROR: no planner for {res.kind}'",
+                    tags=["blueprint", res.name, "error"],
+                )
+            )
+            continue
+
+        model_class = get_spec_model(res.kind)
+        if model_class is None:
+            continue
+
+        # 3. Substitute ${name} tokens in the resource config
+        substituted_config = _substitute_inputs(res.config, resolved_inputs)
+
+        # Build a synthetic child spec (same pattern as _plan_stack)
+        child_data = {
+            "kind": res.kind,
+            "meta": {"name": f"{spec.meta.name}/{res.name}"},
+            "host": spec.host.model_dump(),
+            **substituted_config,
+        }
+
+        if "login" not in child_data:
+            child_data["login"] = spec.login.model_dump()
+        if "local" not in child_data:
+            child_data["local"] = spec.local.model_dump()
+
+        try:
+            child_spec = model_class.model_validate(child_data)
+        except Exception:
+            steps.append(
+                _s(
+                    f"blueprint_{res.name}_validation_error",
+                    f"Failed to validate resource '{res.name}' config as {res.kind}",
+                    R,
+                    StepKind.AGENT_COMMAND,
+                    command=f"echo 'ERROR: validation failed for {res.name}'",
+                    tags=["blueprint", res.name, "error"],
+                )
+            )
+            continue
+
+        # Normalize the child spec
+        child_ctx = NormalizedContext(spec=child_spec, spec_dir=ctx.spec_dir)
+        normalizer_fn = get_normalizer(res.kind)
+        if normalizer_fn is not None:
+            with contextlib.suppress(Exception):
+                normalizer_fn(child_spec, child_ctx)
+
+        # Generate steps from the child planner
+        child_steps = planner_fn(child_spec, child_ctx)
+
+        # Prefix step IDs for traceability
+        for cs in child_steps:
+            cs.id = f"blueprint_{res.name}_{cs.id}"
+            cs.tags = ["blueprint", res.name] + cs.tags
+
+        steps.extend(child_steps)
+
+    # 4. Postflight checks (if the spec declares any)
+    for check in getattr(spec, "checks", []):
+        steps.append(
+            _s(
+                f"blueprint_postflight_{check.type}",
+                f"Blueprint postflight check: {check.type}",
+                V,
+                StepKind.VERIFY,
+                command=_encode_check_command(check, spec),
+                tags=["blueprint", "postflight", check.type],
+            )
+        )
+
+    # Local inventory
+    if spec.local.inventory.enabled:
+        steps.append(
+            _s(
+                "blueprint_open_or_init_local_inventory",
+                "Open or initialize local inventory database",
+                L,
+                StepKind.LOCAL_DB_WRITE,
+                command="init_inventory",
+                tags=["local", "inventory", "blueprint"],
+            )
+        )
+
+    return steps
+
+
 def _topo_sort(resources) -> list:
     """Topologically sort stack resources by depends_on.
 
