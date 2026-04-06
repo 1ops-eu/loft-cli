@@ -38,9 +38,11 @@ app = typer.Typer(
 inventory_app = typer.Typer(help="Manage local server inventory.", no_args_is_help=True)
 inspect_app = typer.Typer(help="Inspect apply runs.", no_args_is_help=True)
 tunnel_app = typer.Typer(help="Manage WireGuard tunnels.", no_args_is_help=True)
+catalog_app = typer.Typer(help="Introspect the loft-cli feature catalog.", no_args_is_help=True)
 app.add_typer(inventory_app, name="inventory")
 app.add_typer(inspect_app, name="inspect")
 app.add_typer(tunnel_app, name="tunnel")
+app.add_typer(catalog_app, name="catalog")
 
 console = Console()
 
@@ -1310,6 +1312,100 @@ def logs(
 
 if __name__ == "__main__":
     app()
+
+
+# ------------------------------------------------------------------ #
+# catalog list | show | export
+# ------------------------------------------------------------------ #
+
+
+@catalog_app.command("list")
+def catalog_list() -> None:
+    """List all registered spec kinds with their descriptions."""
+    from loft_cli_core.registry.catalog import list_catalog_entries
+
+    entries = list_catalog_entries()
+    if not entries:
+        console.print("[dim]No catalog entries registered.[/dim]")
+        return
+
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+    table.add_column("Kind", min_width=20)
+    table.add_column("Description")
+
+    for entry in entries:
+        table.add_row(entry.kind, entry.description)
+
+    console.print(table)
+
+
+@catalog_app.command("show")
+def catalog_show(
+    kind: str = typer.Argument(..., help="Spec kind to show details for (e.g. 'bootstrap')"),
+) -> None:
+    """Show detailed field information for a single spec kind."""
+    from loft_cli_core.registry.catalog import get_catalog_entry
+
+    entry = get_catalog_entry(kind)
+    if entry is None:
+        console.print(f"[bold red]Unknown kind:[/bold red] '{kind}'")
+        console.print("[dim]Run 'loft-cli catalog list' to see all available kinds.[/dim]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Kind:[/bold] {entry.kind}")
+    console.print(entry.description)
+
+    if entry.fields:
+        console.print("\n[bold]Fields:[/bold]")
+        for field in entry.fields:
+            required_tag = (
+                "[red](required)[/red]" if field.get("required") else "[dim](optional)[/dim]"
+            )
+            name = field.get("name", "")
+            type_str = field.get("type", "")
+            desc = field.get("description", "")
+            console.print(f"  [cyan]{name:<30}[/cyan] {type_str:<12} {required_tag}  {desc}")
+    else:
+        console.print("\n[dim]No field metadata available.[/dim]")
+
+    if entry.outputs:
+        console.print("\n[bold]Outputs:[/bold]")
+        for output in entry.outputs:
+            console.print(f"  [green]{output.name}[/green]")
+            console.print(f"    {output.description}")
+            if output.example:
+                console.print(f"    [dim]Example: {output.example}[/dim]")
+
+
+@catalog_app.command("export")
+def catalog_export() -> None:
+    """Serialize all catalog entries to JSON and print to stdout."""
+    import json
+
+    from loft_cli_core.registry.catalog import list_catalog_entries
+
+    entries = list_catalog_entries()
+
+    data = {
+        "kinds": [
+            {
+                "kind": entry.kind,
+                "description": entry.description,
+                "fields": entry.fields,
+                "outputs": [
+                    {
+                        "name": o.name,
+                        "description": o.description,
+                        "example": o.example,
+                    }
+                    for o in entry.outputs
+                ],
+            }
+            for entry in entries
+        ]
+    }
+
+    print(json.dumps(data, indent=2))
 
 
 # ------------------------------------------------------------------ #

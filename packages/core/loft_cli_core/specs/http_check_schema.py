@@ -25,11 +25,15 @@ class HttpCheckConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    url: str  # GET target URL
-    expected_status: int = 200
-    retries: int = 5  # number of attempts
-    interval: int = 3  # seconds between retries
-    timeout: int = 10  # per-request timeout in seconds
+    url: str = Field(description="URL to GET for the readiness check.")
+    expected_status: int = Field(
+        default=200, description="HTTP status code that indicates a passing check."
+    )
+    retries: int = Field(
+        default=5, description="Number of GET attempts before marking the check as failed."
+    )
+    interval: int = Field(default=3, description="Seconds to wait between retry attempts.")
+    timeout: int = Field(default=10, description="Per-request timeout in seconds.")
 
 
 class HttpCheckLoginBlock(BaseModel):
@@ -37,17 +41,27 @@ class HttpCheckLoginBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    user: str = "admin"
-    private_key: str = "~/.ssh/id_ed25519"
-    password: str | None = None
-    port: int = 2222
+    user: str = Field(default="admin", description="SSH username for connecting to the server.")
+    private_key: str = Field(
+        default="~/.ssh/id_ed25519", description="Path to the SSH private key for this connection."
+    )
+    password: str | None = Field(
+        default=None, description="SSH password. Use only when key auth is not available."
+    )
+    port: int = Field(
+        default=2222, description="SSH port on the server (post-bootstrap default is 2222)."
+    )
 
 
 class HttpCheckLocalBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    state_dir: str = ""
-    inventory: InventoryBlock = Field(default_factory=InventoryBlock)
+    state_dir: str = Field(
+        default="", description="Override the local state directory. Defaults to ~/.loft-cli/."
+    )
+    inventory: InventoryBlock = Field(
+        default_factory=InventoryBlock, description="Controls local inventory database recording."
+    )
 
 
 class HttpCheckSpec(BaseModel):

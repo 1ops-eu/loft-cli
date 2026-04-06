@@ -23,8 +23,10 @@ class ComposeTemplateBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    src: str  # local Jinja2 template path (spec-relative)
-    dest: str  # filename relative to project directory
+    src: str = Field(description="Local Jinja2 template path relative to the spec file.")
+    dest: str = Field(
+        description="Destination filename relative to the project directory on the server."
+    )
 
 
 class ManagedDirectoryBlock(BaseModel):
@@ -32,10 +34,14 @@ class ManagedDirectoryBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    path: str  # relative to project directory (or absolute)
-    mode: str = "0755"
-    owner: str = "root"
-    group: str = "root"
+    path: str = Field(
+        description="Directory path to create; relative to project directory or absolute."
+    )
+    mode: str = Field(
+        default="0755", description="Directory permissions as an octal string, e.g. '0755'."
+    )
+    owner: str = Field(default="root", description="OS user that owns the directory.")
+    group: str = Field(default="root", description="OS group that owns the directory.")
 
 
 class PlainFileBlock(BaseModel):
@@ -43,11 +49,15 @@ class PlainFileBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    src: str  # local file path (spec-relative)
-    dest: str  # destination path (relative to project directory or absolute)
-    mode: str = "0644"
-    owner: str = "root"
-    group: str = "root"
+    src: str = Field(
+        description="Local file path relative to the spec file to upload without rendering."
+    )
+    dest: str = Field(description="Destination path relative to the project directory or absolute.")
+    mode: str = Field(
+        default="0644", description="File permissions as an octal string, e.g. '0644'."
+    )
+    owner: str = Field(default="root", description="OS user that owns the uploaded file.")
+    group: str = Field(default="root", description="OS group that owns the uploaded file.")
 
 
 class HttpReadyCheck(BaseModel):
@@ -55,19 +65,31 @@ class HttpReadyCheck(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    url: str
-    expect_status: int = 200
-    timeout: int = 120
-    interval: int = 5
+    url: str = Field(description="URL to poll until it returns the expected HTTP status.")
+    expect_status: int = Field(
+        default=200, description="HTTP status code that indicates the service is ready."
+    )
+    timeout: int = Field(
+        default=120, description="Total seconds to wait for the URL to become ready."
+    )
+    interval: int = Field(default=5, description="Seconds between polling attempts.")
 
 
 class ComposeHealthCheckBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = True
-    timeout: int = 120  # total seconds to wait for all containers healthy
-    interval: int = 5  # seconds between polls
-    http_ready: HttpReadyCheck | None = None
+    enabled: bool = Field(
+        default=True,
+        description="Set to true to wait for all containers to reach healthy status after starting.",
+    )
+    timeout: int = Field(
+        default=120, description="Total seconds to wait for all containers to report healthy."
+    )
+    interval: int = Field(default=5, description="Seconds between container health poll attempts.")
+    http_ready: HttpReadyCheck | None = Field(
+        default=None,
+        description="Optional HTTP readiness check in addition to Docker health checks.",
+    )
 
 
 # ── Post-deploy action models ──────────────────────────────────────────────────
@@ -79,7 +101,9 @@ class PostDeployShellAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["shell"]
-    command: str
+    command: str = Field(
+        description="Shell command to execute on the remote host after the compose stack is running."
+    )
 
 
 class PostDeployContainerExecAction(BaseModel):
@@ -88,8 +112,10 @@ class PostDeployContainerExecAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["container_exec"]
-    container: str
-    command: str
+    container: str = Field(
+        description="Name of the running container to execute the command inside."
+    )
+    command: str = Field(description="Command to run inside the container via 'docker exec'.")
 
 
 class PostDeployHttpRequestAction(BaseModel):
@@ -98,10 +124,15 @@ class PostDeployHttpRequestAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["http_request"]
-    method: str = "GET"
-    url: str
-    body: str | None = None
-    expect_status: int = 200
+    method: str = Field(
+        default="GET", description="HTTP method to use for the request: GET, POST, PUT, etc."
+    )
+    url: str = Field(description="URL to send the HTTP request to.")
+    body: str | None = Field(default=None, description="Optional request body as a string.")
+    expect_status: int = Field(
+        default=200,
+        description="Expected HTTP response status code for a successful post-deploy action.",
+    )
 
 
 PostDeployAction = Annotated[
@@ -115,17 +146,27 @@ class ComposeProjectLoginBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    user: str = "admin"
-    private_key: str = "~/.ssh/id_ed25519"
-    password: str | None = None
-    port: int = 2222
+    user: str = Field(default="admin", description="SSH username for connecting to the server.")
+    private_key: str = Field(
+        default="~/.ssh/id_ed25519", description="Path to the SSH private key for this connection."
+    )
+    password: str | None = Field(
+        default=None, description="SSH password. Use only when key auth is not available."
+    )
+    port: int = Field(
+        default=2222, description="SSH port on the server (post-bootstrap default is 2222)."
+    )
 
 
 class ComposeProjectLocalBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    state_dir: str = ""
-    inventory: InventoryBlock = Field(default_factory=InventoryBlock)
+    state_dir: str = Field(
+        default="", description="Override the local state directory. Defaults to ~/.loft-cli/."
+    )
+    inventory: InventoryBlock = Field(
+        default_factory=InventoryBlock, description="Controls local inventory database recording."
+    )
 
 
 class ComposeProjectBlock(BaseModel):
@@ -133,17 +174,45 @@ class ComposeProjectBlock(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str  # docker compose project name
-    directory: str  # remote base directory (absolute)
-    compose_file: str = "docker-compose.yml"  # compose filename (in project dir or spec-relative)
-    templates: list[ComposeTemplateBlock] = Field(default_factory=list)
-    files: list[PlainFileBlock] = Field(default_factory=list)
-    variables: dict[str, str] = Field(default_factory=dict)
-    directories: list[ManagedDirectoryBlock] = Field(default_factory=list)
-    pull_before_up: bool = True
-    rebuild: bool = False  # force --force-recreate on docker compose up
-    healthcheck: ComposeHealthCheckBlock = Field(default_factory=ComposeHealthCheckBlock)
-    post_deploy: list[PostDeployAction] = Field(default_factory=list)
+    name: str = Field(description="Docker Compose project name (used as the --project-name flag).")
+    directory: str = Field(
+        description="Absolute path on the remote server where the project files are uploaded."
+    )
+    compose_file: str = Field(
+        default="docker-compose.yml",
+        description="Compose file name within the project directory, or a spec-relative local path.",
+    )
+    templates: list[ComposeTemplateBlock] = Field(
+        default_factory=list,
+        description="Jinja2 templates to render and upload into the project directory.",
+    )
+    files: list[PlainFileBlock] = Field(
+        default_factory=list,
+        description="Plain files to upload verbatim into the project directory.",
+    )
+    variables: dict[str, str] = Field(
+        default_factory=dict,
+        description="Variables available to Jinja2 templates during rendering.",
+    )
+    directories: list[ManagedDirectoryBlock] = Field(
+        default_factory=list,
+        description="Additional directories to create in or alongside the project directory.",
+    )
+    pull_before_up: bool = Field(
+        default=True,
+        description="Set to true to run 'docker compose pull' before starting the stack.",
+    )
+    rebuild: bool = Field(
+        default=False,
+        description="Set to true to force --force-recreate on 'docker compose up' (recreates containers).",
+    )
+    healthcheck: ComposeHealthCheckBlock = Field(
+        default_factory=ComposeHealthCheckBlock,
+        description="Controls health and readiness checks after the stack starts.",
+    )
+    post_deploy: list[PostDeployAction] = Field(
+        default_factory=list, description="Actions to run after the stack is up and healthy."
+    )
 
 
 class ComposeProjectSpec(BaseModel):
