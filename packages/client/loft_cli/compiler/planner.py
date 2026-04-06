@@ -1607,17 +1607,28 @@ def _plan_compose_project(spec: ComposeProjectSpec, ctx: NormalizedContext) -> l
         )
 
         # HTTP-level readiness check (optional, after container healthcheck)
+        # Runs on the target VM via SSH using curl, so 'localhost' refers to the target.
         if p.healthcheck.http_ready is not None:
             hr = p.healthcheck.http_ready
-            http_ready_cmd = f"http_ready:{hr.url}:{hr.expect_status}:{hr.timeout}:{hr.interval}"
+            # Build a bash poll loop that runs on the target VM via SSH
+            http_ready_cmd = (
+                f"deadline=$(( $(date +%s) + {hr.timeout} )); "
+                f"while [ $(date +%s) -lt $deadline ]; do "
+                f"  code=$(curl -s -o /dev/null -w '%{{http_code}}' --max-time {hr.interval} '{hr.url}' 2>/dev/null || echo 0); "
+                f"  if [ \"$code\" = \"{hr.expect_status}\" ]; then echo \"HTTP {hr.url}: $code\"; exit 0; fi; "
+                f"  sleep {hr.interval}; "
+                f"done; "
+                f"echo \"HTTP readiness timed out after {hr.timeout}s: {hr.url} (last: $code)\"; exit 1"
+            )
             steps.append(
                 _s(
                     "compose_http_ready",
                     f"HTTP readiness check: {hr.url} (expect {hr.expect_status}, "
                     f"timeout={hr.timeout}s)",
-                    V,
-                    StepKind.COMPOSE_HTTP_READY,
+                    R,
+                    StepKind.SSH_COMMAND,
                     command=http_ready_cmd,
+                    sudo=False,
                     tags=["compose", "http_ready"],
                 )
             )
@@ -1650,16 +1661,22 @@ def _plan_compose_project(spec: ComposeProjectSpec, ctx: NormalizedContext) -> l
                 )
             )
         elif action.type == "http_request":
+            # Run the HTTP request via SSH on the target VM using curl,
+            # so 'localhost' refers to the target, not the loft-cli client.
+            curl_data = f"-d '{action.body}'" if action.body else ""
+            post_http_cmd = (
+                f"code=$(curl -s -o /dev/null -w '%{{http_code}}' -X {action.method} {curl_data} '{action.url}'); "
+                f"if [ \"$code\" = \"{action.expect_status}\" ]; then echo \"{action.method} {action.url}: $code\"; exit 0; "
+                f"else echo \"{action.method} {action.url}: got $code expected {action.expect_status}\"; exit 1; fi"
+            )
             steps.append(
                 _s(
                     step_id,
                     f"post_deploy_{i} — http_request {action.method} {action.url}",
-                    V,
-                    StepKind.POST_DEPLOY_HTTP,
-                    command=(
-                        f"post_deploy_http:{action.method}:{action.url}"
-                        f":{action.expect_status}" + (f":{action.body}" if action.body else ":")
-                    ),
+                    R,
+                    StepKind.SSH_COMMAND,
+                    command=post_http_cmd,
+                    sudo=False,
                     tags=["compose", "post_deploy"],
                 )
             )
