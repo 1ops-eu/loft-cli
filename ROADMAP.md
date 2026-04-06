@@ -695,6 +695,32 @@ Next steps:
 
 ---
 
+## v0.11 -- CI/CD Repair + Release Pipeline Hardening
+
+**Goal:** Restore all broken GitHub Actions workflows so that every push produces a green build, all packages publish correctly to PyPI, and all binary and Docker artifacts are built and released reliably.
+
+**Context:** As the monorepo and feature set grew through v0.3–v0.6, several CI/CD workflows drifted out of sync with the current package structure, entry points, and build scripts. Failed actions currently block the release pipeline and prevent reliable binary distribution.
+
+| Item | Description |
+|---|---|
+| Audit all workflows | Review every file under `.github/workflows/` — identify which jobs fail, why, and what they depend on |
+| Fix package publish workflows | Ensure `loft-cli-core`, `loft-cli`, and `loft-cli-agent` all publish to PyPI correctly from the three-package monorepo layout |
+| Fix client binary build | Restore Linux amd64/arm64 and macOS amd64/arm64 binary builds via `scripts/build_binary.py` + PyInstaller |
+| Fix agent binary build | Restore Linux amd64/arm64 agent binary builds via `scripts/build_agent_binary.py` + PyInstaller |
+| Fix Docker image build + push | Restore `ghcr.io/1ops-eu/loft-cli` image build and push on tag |
+| Fix checksums generation | Ensure `checksums.txt` is generated and attached to GitHub Releases covering all binary assets |
+| Fix smoke test CI job | Ensure the smoke test suite runs cleanly against all 15 example specs in CI |
+| Lint + format CI gate | Confirm `ruff` + `black` checks pass and are enforced on every PR |
+| Release trigger validation | Verify the full release pipeline fires correctly on `git tag vX.Y.Z` and produces a complete GitHub Release |
+
+**Acceptance criteria:**
+- Every job in every workflow passes on a clean push to `main`
+- `git tag v0.11.0 && git push origin v0.11.0` produces a complete GitHub Release with all six binary assets, `checksums.txt`, Docker image, and all three PyPI packages
+- No workflow references stale paths, old entry points, or removed scripts
+- Smoke tests pass in CI without manual intervention
+
+---
+
 ## v1.0 -- Production-Ready Release
 
 **Goal:** Make loft-cli stable enough for unattended production use by independent operators.
@@ -705,7 +731,6 @@ Next steps:
 | Full test coverage | Unit + integration coverage for all compiler, plan, agent, and runtime paths |
 | Signed release artifacts | GPG-sign binaries; publish `.sig` files (RFC 003) |
 | SHA-256 checksums | `checksums.txt` with every release |
-| OS keychain credential store | macOS Keychain, GNOME Keyring, Windows Credential Manager integration |
 | CONTRIBUTING.md | Contributor guide, PR process, local dev setup |
 | CHANGELOG.md | Automated changelog from conventional commits |
 | Docs site | Generated from README + per-spec reference docs |
