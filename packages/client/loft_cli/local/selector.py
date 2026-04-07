@@ -1,10 +1,11 @@
 """Fleet spec selection via label selectors.
 
-Provides three public functions:
+Provides four public functions:
 
     parse_selector(expr)          -- "role=worker,env=staging" -> [("role","worker"), ...]
     evaluate_selector(sel, labs)  -- AND-match all predicates against a labels dict
     select_specs(spec_dir, expr)  -- glob a directory, parse YAMLs, return matching (path, spec) pairs
+    _scan_all_specs(spec_dir)     -- glob a directory, parse all YAMLs, return all (path, spec) pairs
 """
 
 from __future__ import annotations
@@ -149,3 +150,57 @@ def select_specs(
         raise ValueError(f"No specs in '{spec_dir}' matched selector '{selector_expr}'")
 
     return matches
+
+
+def _scan_all_specs(
+    spec_dir: str | Path,
+) -> list[tuple[str, Any]]:
+    """Discover all YAML spec files in *spec_dir* without any selector filtering.
+
+    Recursively globs *spec_dir* for ``*.yaml`` and ``*.yml`` files, attempts
+    to load each as a loft-cli spec (with ``strict_env=False`` so environment
+    variables need not be set), and falls back to the raw YAML mapping on
+    parse failure.  All parseable files are returned regardless of labels.
+
+    Parameters
+    ----------
+    spec_dir:
+        Directory to search recursively.
+
+    Returns
+    -------
+    list of (path_str, spec) tuples
+        Each element is the spec file's absolute path (as a string) and the
+        parsed spec object (or raw YAML dict on failure).  Returned in
+        filesystem glob order.
+    """
+    import yaml
+
+    from loft_cli_core.specs.loader import load_spec
+
+    spec_dir = Path(spec_dir)
+
+    # Collect all YAML files recursively.
+    yaml_files: list[Path] = sorted(list(spec_dir.rglob("*.yaml")) + list(spec_dir.rglob("*.yml")))
+
+    results: list[tuple[str, Any]] = []
+
+    for yaml_path in yaml_files:
+        # Load raw YAML first to confirm it's a dict; skip unparseable files.
+        try:
+            raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        except yaml.YAMLError:
+            continue
+
+        if not isinstance(raw, dict):
+            continue
+
+        # Try to parse the spec properly; fall back to raw dict on failure.
+        try:
+            spec = load_spec(yaml_path, strict_env=False)
+        except Exception:
+            spec = raw
+
+        results.append((str(yaml_path), spec))
+
+    return results
