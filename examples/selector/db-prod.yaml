@@ -1,0 +1,27 @@
+kind: package
+
+meta:
+  name: db-tools
+  description: Install database tools on database nodes in production
+  labels:
+    role: db
+    env: prod
+
+host:
+  name: prod-db-1
+  address: 203.0.113.20
+  os_family: debian
+
+login:
+  user: admin
+  private_key: ~/.ssh/id_ed25519
+  port: 2222
+
+packages:
+  - name: postgresql-client
+    state: present
+
+local:
+  inventory:
+    enabled: true
+    db_path: ~/.loft-cli/inventory.db

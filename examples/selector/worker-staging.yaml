@@ -1,0 +1,29 @@
+kind: package
+
+meta:
+  name: worker-tools
+  description: Install operator tools on worker nodes in staging
+  labels:
+    role: worker
+    env: staging
+
+host:
+  name: staging-worker-1
+  address: 203.0.113.10
+  os_family: debian
+
+login:
+  user: admin
+  private_key: ~/.ssh/id_ed25519
+  port: 2222
+
+packages:
+  - name: curl
+    state: present
+  - name: jq
+    state: present
+
+local:
+  inventory:
+    enabled: true
+    db_path: ~/.loft-cli/inventory.db

@@ -1,4 +1,4 @@
-"""loft_cli.local — local state helpers (inventory, keys, SSH config, selectors, …)."""
+"""Local state management for loft-cli (SSH config, inventory, tunnels, selectors)."""
 
 from loft_cli.local.selector import select_specs
 
