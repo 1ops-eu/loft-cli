@@ -18,7 +18,11 @@ class MetaBlock(BaseModel):
     )
     labels: dict[str, str] = Field(
         default_factory=dict,
-        description="Arbitrary key-value labels for tagging and filtering specs (e.g. env=prod, team=platform).",
+        description=(
+            "Arbitrary key=value labels for fleet selection. "
+            "Used by 'loft-cli fleet' commands to target subsets of specs, "
+            "e.g. role=worker, env=staging."
+        ),
     )
 
 

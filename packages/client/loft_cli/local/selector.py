@@ -1,187 +1,185 @@
-"""Fleet selector: parse, evaluate, and filter spec files by label expressions.
+"""Selector module for multi-host fleet operations.
+
+Provides label-based filtering of spec files in a directory so that fleet
+commands can target a subset of hosts with a single selector expression.
+
+Selector expression syntax
+--------------------------
+A selector is a comma-separated list of ``key=value`` predicate pairs.
+All predicates must match (AND semantics).  Example::
+
+    role=worker,env=staging
+
+Label matching
+--------------
+Labels are read from the ``meta.labels`` mapping in each spec YAML file.
+If a spec does not have a ``meta.labels`` field it is treated as having an
+empty label set and will not match any non-empty selector.
 
 Usage
 -----
-    from loft_cli.local.selector import parse_selector, evaluate_selector, select_specs
+::
 
-    # Parse a selector expression like "env=staging,role=worker"
-    predicates = parse_selector("env=staging,role=worker")
+    from loft_cli.local.selector import select_specs
 
-    # Check whether a labels dict matches all predicates (AND)
-    match = evaluate_selector(predicates, {"env": "staging", "role": "worker"})  # True
-
-    # Scan a directory and return (filepath, parsed_spec) tuples for matching specs
-    results = select_specs("./hosts/", "env=staging")
+    paths = select_specs("/path/to/specs", "role=worker,env=staging")
+    for path in paths:
+        # run apply pipeline on each matching spec
+        ...
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
-def parse_selector(expr: str) -> list[tuple[str, str]]:
-    """Parse a comma-separated ``key=value`` selector expression.
+def parse_selector(expr: str) -> dict[str, str]:
+    """Parse a selector expression into a dict of key→value predicates.
 
     Parameters
     ----------
     expr:
-        Selector string, e.g. ``"role=worker"`` or ``"env=staging,role=worker"``.
+        A comma-separated list of ``key=value`` pairs, e.g.
+        ``"role=worker,env=staging"``.
 
     Returns
     -------
-    list[tuple[str, str]]
-        List of ``(key, value)`` predicate pairs.
+    dict[str, str]
+        A mapping of label key to expected value.
 
     Raises
     ------
     ValueError
-        If *expr* is empty or any predicate is not in ``key=value`` format.
+        If *expr* is empty or any predicate is malformed (missing ``=``,
+        empty key, or empty value).
     """
     if not expr or not expr.strip():
-        raise ValueError("Selector cannot be empty")
+        raise ValueError("Selector expression must not be empty")
 
-    predicates: list[tuple[str, str]] = []
+    predicates: dict[str, str] = {}
     for part in expr.split(","):
         part = part.strip()
         if not part:
             continue
         if "=" not in part:
-            raise ValueError(f"Invalid selector '{part}': must be key=value format")
+            raise ValueError(f"Malformed selector predicate '{part}': expected 'key=value' format")
         key, _, value = part.partition("=")
         key = key.strip()
         value = value.strip()
         if not key:
-            raise ValueError(f"Invalid selector '{part}': key must not be empty")
-        predicates.append((key, value))
+            raise ValueError(f"Malformed selector predicate '{part}': key must not be empty")
+        if not value:
+            raise ValueError(f"Malformed selector predicate '{part}': value must not be empty")
+        predicates[key] = value
 
     if not predicates:
-        raise ValueError("Selector cannot be empty")
+        raise ValueError("Selector expression must contain at least one 'key=value' predicate")
 
     return predicates
 
 
-def evaluate_selector(selector: list[tuple[str, str]], labels: dict[str, str]) -> bool:
-    """Return True when *labels* satisfies all predicates in *selector* (AND).
+def evaluate_selector(selector: dict[str, str], labels: dict[str, str]) -> bool:
+    """Evaluate whether a set of labels satisfies all selector predicates.
+
+    Implements AND semantics: every predicate in *selector* must be present
+    in *labels* with a matching value.
 
     Parameters
     ----------
     selector:
-        List of ``(key, value)`` pairs as returned by :func:`parse_selector`.
+        The parsed selector dict returned by :func:`parse_selector`.
     labels:
-        Labels dict from ``parsed_spec.meta.labels``.
+        The label dict from the spec's ``meta.labels`` field (may be empty).
+
+    Returns
+    -------
+    bool
+        ``True`` if all predicates match, ``False`` otherwise.
     """
-    return all(labels.get(key) == value for key, value in selector)
+    return all(labels.get(key) == expected for key, expected in selector.items())
 
 
-def select_specs(
-    spec_dir: str,
-    selector_expr: str,
-) -> list[tuple[str, Any]]:
-    """Scan *spec_dir* recursively for YAML specs matching *selector_expr*.
+def select_specs(spec_dir: str | Path, selector_expr: str) -> list[Path]:
+    """Scan *spec_dir* for YAML spec files that match *selector_expr*.
 
-    Files are scanned in lexicographic order.  Each file is parsed with
-    :func:`loft_cli_core.specs.loader.load_spec` (strict env is disabled so
-    specs with unresolved ``${VAR}`` references are still loadable for label
-    inspection).
+    Files are scanned recursively in lexicographic (sorted) order.  For each
+    file the raw YAML is read and ``meta.labels`` is extracted (if present).
+    The file is included in the result only if all selector predicates match
+    the spec's labels.
 
     Parameters
     ----------
     spec_dir:
-        Path to the directory to scan.
+        Directory to search for ``*.yaml`` / ``*.yml`` files.
     selector_expr:
-        Selector expression string (forwarded to :func:`parse_selector`).
+        Selector expression string, e.g. ``"role=worker,env=staging"``.
 
     Returns
     -------
-    list[tuple[str, Any]]
-        List of ``(filepath, parsed_spec)`` tuples for matching specs, in
-        lexicographic path order.
+    list[Path]
+        Sorted list of matching spec file paths.
 
     Raises
     ------
     ValueError
-        - If *selector_expr* is empty or malformed (forwarded from
-          :func:`parse_selector`).
-        - If no specs in *spec_dir* match the selector.
+        If *selector_expr* is invalid (propagated from :func:`parse_selector`),
+        or if no spec files in *spec_dir* match the selector (actionable
+        message includes which labels were scanned and the selector used).
     """
-    from loft_cli_core.specs.loader import SpecLoadError, load_spec
+    import yaml
 
-    predicates = parse_selector(selector_expr)
+    spec_dir = Path(spec_dir)
+    selector = parse_selector(selector_expr)
 
-    dir_path = Path(spec_dir)
-    if not dir_path.is_dir():
-        raise ValueError(f"Fleet directory does not exist or is not a directory: {spec_dir}")
-
-    # Collect all YAML files in lexicographic order
-    yaml_files = sorted(
-        p for p in dir_path.rglob("*") if p.suffix in (".yaml", ".yml") and p.is_file()
+    # Collect all YAML files in lexicographic order.
+    yaml_files: list[Path] = sorted(
+        [p for p in spec_dir.rglob("*") if p.is_file() and p.suffix.lower() in (".yaml", ".yml")]
     )
 
-    results: list[tuple[str, Any]] = []
-    for yaml_path in yaml_files:
+    matched: list[Path] = []
+    scanned_labels: list[tuple[str, dict[str, str]]] = []
+
+    for spec_path in yaml_files:
         try:
-            parsed = load_spec(yaml_path, strict_env=False)
-        except (SpecLoadError, Exception):
-            # Skip files that can't be parsed (wrong format, unknown kind, etc.)
+            raw_text = spec_path.read_text(encoding="utf-8")
+            # Use safe_load_all to handle multi-document files; take the first
+            # document only for label matching (primary spec document).
+            documents = [d for d in yaml.safe_load_all(raw_text) if d is not None]
+        except Exception:
+            # Skip unparseable files silently.
             continue
 
-        # Handle multi-doc specs — iterate each document
-        specs = parsed if isinstance(parsed, list) else [parsed]
-        for spec in specs:
-            meta = getattr(spec, "meta", None)
-            if meta is None:
+        for raw in documents:
+            if not isinstance(raw, dict):
                 continue
-            labels = getattr(meta, "labels", {}) or {}
-            if evaluate_selector(predicates, labels):
-                results.append((str(yaml_path), spec))
 
-    if not results:
+            meta = raw.get("meta", {}) or {}
+            labels: dict[str, str] = meta.get("labels", {}) or {}
+            # Coerce values to strings for comparison robustness.
+            labels = {str(k): str(v) for k, v in labels.items()}
+
+            scanned_labels.append((str(spec_path), labels))
+
+            if evaluate_selector(selector, labels):
+                matched.append(spec_path)
+                break  # Only match a file once even if it has multiple documents.
+
+    if not matched:
+        # Build an actionable error message.
+        scanned_summary = (
+            ", ".join(f"{path}({lbl})" for path, lbl in scanned_labels)
+            if scanned_labels
+            else "none"
+        )
         raise ValueError(
-            f"No specs matched selector '{selector_expr}' in directory '{spec_dir}'. "
-            "Check that your spec files have the correct meta.labels."
+            f"No spec files in '{spec_dir}' matched selector '{selector_expr}'. "
+            f"Scanned {len(scanned_labels)} file(s). "
+            f"Labels found: [{scanned_summary}]. "
+            f"Check that your spec files define 'meta.labels' matching the selector."
         )
 
-    return results
-
-
-def _scan_all_specs(spec_dir: str) -> list[tuple[str, Any]]:
-    """Return all parseable specs from *spec_dir* (no filtering).
-
-    Used internally by fleet commands when no ``--selector`` is provided.
-    Returns list of ``(filepath, parsed_spec)`` tuples in lexicographic order.
-    Silently skips files that cannot be parsed.
-
-    Raises
-    ------
-    ValueError
-        If the directory contains no parseable specs.
-    """
-    from loft_cli_core.specs.loader import SpecLoadError, load_spec
-
-    dir_path = Path(spec_dir)
-    if not dir_path.is_dir():
-        raise ValueError(f"Fleet directory does not exist or is not a directory: {spec_dir}")
-
-    yaml_files = sorted(
-        p for p in dir_path.rglob("*") if p.suffix in (".yaml", ".yml") and p.is_file()
-    )
-
-    results: list[tuple[str, Any]] = []
-    for yaml_path in yaml_files:
-        try:
-            parsed = load_spec(yaml_path, strict_env=False)
-        except (SpecLoadError, Exception):
-            continue
-
-        specs = parsed if isinstance(parsed, list) else [parsed]
-        for spec in specs:
-            meta = getattr(spec, "meta", None)
-            if meta is None:
-                continue
-            results.append((str(yaml_path), spec))
-
-    if not results:
-        raise ValueError(f"No parseable specs found in directory '{spec_dir}'.")
-
-    return results
+    return matched
