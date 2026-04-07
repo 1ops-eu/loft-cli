@@ -1,0 +1,29 @@
+kind: package
+
+meta:
+  name: worker-1-tools
+  description: Install common tools on worker-1
+
+host:
+  name: worker-1
+  address: 203.0.113.11
+  os_family: debian
+
+login:
+  user: admin
+  private_key: ~/.ssh/id_ed25519
+  port: 2222
+
+packages:
+  - name: curl
+    state: present
+  - name: jq
+    state: present
+  - name: htop
+    state: present
+
+update_cache: true
+
+local:
+  inventory:
+    enabled: false
