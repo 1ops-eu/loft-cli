@@ -18,7 +18,7 @@ class MetaBlock(BaseModel):
     )
     labels: dict[str, str] = Field(
         default_factory=dict,
-        description="Arbitrary key-value labels for fleet selector filtering.",
+        description="Arbitrary key=value labels for grouping and selecting specs (e.g. env=prod, team=platform).",
     )
 
 
