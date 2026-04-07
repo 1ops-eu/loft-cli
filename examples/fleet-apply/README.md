@@ -1,58 +1,49 @@
 # fleet-apply example
 
-Demonstrates `loft-cli apply --fleet` to apply a directory of specs sequentially.
+Demonstrates fleet apply: applying specs to multiple hosts using `--fleet` and label selectors.
+
+## Structure
+
+```
+fleet/
+  worker-01.yaml   # role=worker, env=staging
+  worker-02.yaml   # role=worker, env=staging
+  db-01.yaml       # role=database, env=staging
+```
 
 ## Usage
 
-### Apply all specs in the fleet
+Apply to all hosts in the fleet directory:
 
-```bash
-loft-cli apply --fleet examples/fleet-apply/specs
+```sh
+loft-cli apply --fleet ./fleet/
 ```
 
-Output:
-```
-Fleet apply: 2 host(s) matched
-[1/2] worker-1.yaml
-  ...apply output for worker-1...
-[2/2] worker-2.yaml
-  ...apply output for worker-2...
-Done: 2 succeeded, 0 failed
+Apply only to `role=worker` hosts:
+
+```sh
+loft-cli apply --fleet ./fleet/ --selector "role=worker"
 ```
 
-### Continue past failures
+Apply to all `env=staging` hosts, continuing even if one fails:
 
-```bash
-loft-cli apply --fleet examples/fleet-apply/specs --continue-on-error
+```sh
+loft-cli apply --fleet ./fleet/ --selector "env=staging" --continue-on-error
 ```
 
-If one host fails, the remaining hosts are still attempted. The final summary
-reports per-host attribution:
+## Labels
 
-```
-Done: 1 succeeded, 1 failed
-Failed hosts:
-  ✗ examples/fleet-apply/specs/worker-2.yaml
-```
+Specs opt into fleet selection by declaring `meta.labels`:
 
-### Dry-run a fleet
-
-```bash
-loft-cli apply --fleet examples/fleet-apply/specs --dry-run
+```yaml
+meta:
+  name: worker-01
+  labels:
+    role: worker
+    env: staging
 ```
 
-### Filter with a selector (requires meta.labels support)
+Selectors use `key=value` syntax, comma-separated for AND logic:
 
-```bash
-loft-cli apply --fleet examples/fleet-apply/specs --selector role=worker
-```
-
-Specs are filtered by matching `meta.labels.role == "worker"`.
-
-## Files
-
-```
-specs/
-  worker-1.yaml   -- package spec targeting 203.0.113.11
-  worker-2.yaml   -- package spec targeting 203.0.113.12
-```
+- `role=worker` — all worker specs
+- `env=staging,role=worker` — workers in staging only

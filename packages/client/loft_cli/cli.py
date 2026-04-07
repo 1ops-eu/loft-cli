@@ -943,125 +943,84 @@ def apply(
     fleet: Path | None = typer.Option(
         None,
         "--fleet",
-        help="Directory of YAML spec files to apply as a fleet",
+        help="Directory containing fleet spec files (*.yaml). Applies all matched specs.",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
     ),
-    selector: str | None = typer.Option(
-        None,
+    selector: str = typer.Option(
+        "",
         "--selector",
-        help="Filter fleet specs by label (key=value format, e.g. role=worker)",
+        help=(
+            "Label selector to filter fleet specs (e.g. 'role=worker' or 'env=staging,role=worker'). "
+            "Only used with --fleet."
+        ),
     ),
     continue_on_error: bool = typer.Option(
         False,
         "--continue-on-error",
-        help="When applying a fleet, continue to next host even if one fails",
+        help="When using --fleet, continue applying remaining specs even if one fails.",
     ),
 ) -> None:
-    """Apply a spec (or a fleet of specs) to provision infrastructure."""
+    """Apply a spec (or a fleet of specs) to provision infrastructure.
+
+    Single-spec mode (default)::
+
+        loft-cli apply server.yaml
+
+    Fleet mode — apply all specs in a directory::
+
+        loft-cli apply --fleet ./fleet/
+        loft-cli apply --fleet ./fleet/ --selector "role=worker"
+        loft-cli apply --fleet ./fleet/ --selector "env=staging" --continue-on-error
+    """
     # ------------------------------------------------------------------ #
-    # Fleet mode: --fleet <dir>
+    # Fleet mode
     # ------------------------------------------------------------------ #
     if fleet is not None:
-        if not fleet.is_dir():
-            console.print(f"[bold red]Fleet path is not a directory:[/bold red] {fleet}")
-            raise typer.Exit(1)
+        from loft_cli.local.fleet import select_specs
 
-        spec_paths = _select_specs(fleet, selector)
+        try:
+            matched = select_specs(fleet, selector)
+        except ValueError as e:
+            console.print(f"[bold red]Selector error:[/bold red] {e}")
+            raise typer.Exit(1) from None
 
-        selector_label = f" (selector: {selector})" if selector else ""
-        console.print(
-            f"[bold]Fleet apply:[/bold] {len(spec_paths)} host(s) matched{selector_label}"
-        )
+        selector_desc = f" (selector: {selector})" if selector else ""
+        console.print(f"[bold]Fleet apply:[/bold] {len(matched)} host(s) matched{selector_desc}")
 
-        if not spec_paths:
-            console.print("[yellow]No specs matched — nothing to apply.[/yellow]")
+        if not matched:
+            console.print("[yellow]No specs matched — nothing to do.[/yellow]")
             return
 
-        succeeded: list[Path] = []
-        failed: list[Path] = []
-
-        total = len(spec_paths)
-        for i, spec_path in enumerate(spec_paths, start=1):
-            prefix = f"[{i}/{total}] {spec_path.name}"
-            console.print(f"\n[bold]{prefix}[/bold]")
-
+        failures: list[Path] = []
+        for i, spec_path in enumerate(matched, 1):
+            console.print(f"\n[bold dim][{i}/{len(matched)}][/bold dim] {spec_path}")
             try:
-                result = _build_pipeline(
-                    spec_path, ensure_keys=True, strict_env=not passthrough, env_file=env_file
-                )
-            except Exception as e:
-                console.print(f"  [bold red]Error:[/bold red] {e}")
-                failed.append(spec_path)
+                _fleet_apply_one(spec_path, mode, dry_run, passthrough, env_file, console)
+            except typer.Exit:
+                failures.append(spec_path)
                 if not continue_on_error:
                     console.print(
-                        "[bold red]Aborting fleet apply (--continue-on-error not set).[/bold red]"
+                        f"\n[bold red]Fleet apply aborted after failure:[/bold red] {spec_path}"
                     )
-                    _print_fleet_summary(succeeded, failed, spec_paths[i:])
+                    console.print("[dim]Use --continue-on-error to apply remaining specs.[/dim]")
                     raise typer.Exit(1) from None
-                continue
 
-            specs_r, ctxs_r, plans_r, issues = result
-
-            if issues:
-                from loft_cli_core.specs.validators import has_errors
-
-                for issue in issues:
-                    color = "red" if issue.severity == "error" else "yellow"
-                    console.print(f"  [{color}]{issue}[/{color}]")
-                if has_errors(issues):
-                    console.print(
-                        f"  [bold red]Validation errors in {spec_path.name} — skipping.[/bold red]"
-                    )
-                    failed.append(spec_path)
-                    if not continue_on_error:
-                        console.print(
-                            "[bold red]Aborting fleet apply (--continue-on-error not set).[/bold red]"
-                        )
-                        _print_fleet_summary(succeeded, failed, spec_paths[i:])
-                        raise typer.Exit(1)
-                    continue
-
-            # Normalize to lists for uniform handling
-            if isinstance(specs_r, list):
-                spec_list = list(zip(specs_r, ctxs_r, plans_r, strict=True))
-            else:
-                spec_list = [(specs_r, ctxs_r, plans_r)]
-
-            host_failed = False
-            for parsed_spec, ctx, p in spec_list:
-                try:
-                    _apply_single(parsed_spec, ctx, p, mode, dry_run, console)
-                except SystemExit as exc:
-                    if exc.code != 0:
-                        host_failed = True
-                        break
-                except typer.Exit as exc:
-                    if exc.exit_code != 0:
-                        host_failed = True
-                        break
-
-            if host_failed:
-                failed.append(spec_path)
-                if not continue_on_error:
-                    console.print(
-                        "[bold red]Aborting fleet apply (--continue-on-error not set).[/bold red]"
-                    )
-                    _print_fleet_summary(succeeded, failed, spec_paths[i:])
-                    raise typer.Exit(1)
-            else:
-                succeeded.append(spec_path)
-
-        _print_fleet_summary(succeeded, failed, [])
-        if failed:
+        succeeded = len(matched) - len(failures)
+        console.print(f"\n[bold]Done:[/bold] {succeeded} succeeded, {len(failures)} failed")
+        if failures:
+            console.print("[bold red]Failed specs:[/bold red]")
+            for f in failures:
+                console.print(f"  [red]✗[/red] {f}")
             raise typer.Exit(1)
         return
 
     # ------------------------------------------------------------------ #
-    # Single-spec mode (original behaviour)
+    # Single-spec mode
     # ------------------------------------------------------------------ #
     if spec is None:
-        console.print(
-            "[bold red]Error:[/bold red] Provide either a spec file argument or --fleet <dir>."
-        )
+        console.print("[bold red]Error:[/bold red] Provide a spec file or use --fleet <dir>.")
         raise typer.Exit(1)
 
     if not spec.exists():
@@ -1091,24 +1050,38 @@ def apply(
         _apply_single(parsed_spec, ctx, p, mode, dry_run, console)
 
 
-def _print_fleet_summary(
-    succeeded: list[Path],
-    failed: list[Path],
-    skipped: list[Path],
+def _fleet_apply_one(
+    spec_path: Path,
+    mode: str,
+    dry_run: bool,
+    passthrough: bool,
+    env_file: list[Path] | None,
+    console: Console,
 ) -> None:
-    """Print fleet apply summary line."""
-    console.print(
-        f"\n[bold]Done:[/bold] {len(succeeded)} succeeded, {len(failed)} failed"
-        + (f", {len(skipped)} skipped" if skipped else "")
-    )
-    if failed:
-        console.print("[bold red]Failed hosts:[/bold red]")
-        for p in failed:
-            console.print(f"  [red]✗[/red] {p}")
-    if skipped:
-        console.print("[bold yellow]Skipped (aborted early):[/bold yellow]")
-        for p in skipped:
-            console.print(f"  [yellow]○[/yellow] {p}")
+    """Build the pipeline and apply a single spec from a fleet directory.
+
+    Raises ``typer.Exit(1)`` on failure so the fleet loop can detect it.
+    """
+    try:
+        result = _build_pipeline(
+            spec_path, ensure_keys=True, strict_env=not passthrough, env_file=env_file
+        )
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(1) from None
+
+    specs_r, ctxs_r, plans_r, issues = result
+
+    if issues:
+        _print_issues(issues, stop_on_error=True)
+
+    if isinstance(specs_r, list):
+        spec_list = list(zip(specs_r, ctxs_r, plans_r, strict=True))
+    else:
+        spec_list = [(specs_r, ctxs_r, plans_r)]
+
+    for parsed_spec, ctx, p in spec_list:
+        _apply_single(parsed_spec, ctx, p, mode, dry_run, console)
 
 
 def _apply_single(parsed_spec, ctx, p, mode, dry_run, console) -> None:
