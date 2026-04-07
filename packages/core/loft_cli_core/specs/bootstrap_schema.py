@@ -16,6 +16,10 @@ class MetaBlock(BaseModel):
     description: str = Field(
         default="", description="Optional longer description of this spec's purpose."
     )
+    labels: dict[str, str] = Field(
+        default_factory=dict,
+        description="Arbitrary key/value labels for fleet targeting via --selector.",
+    )
 
 
 class HostBlock(BaseModel):
