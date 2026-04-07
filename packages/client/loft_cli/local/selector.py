@@ -155,12 +155,14 @@ def select_specs(
 def _scan_all_specs(
     spec_dir: str | Path,
 ) -> list[tuple[str, Any]]:
-    """Discover all YAML spec files in *spec_dir* without any selector filtering.
+    """Discover all YAML spec files in a directory without selector filtering.
 
-    Recursively globs *spec_dir* for ``*.yaml`` and ``*.yml`` files, attempts
-    to load each as a loft-cli spec (with ``strict_env=False`` so environment
-    variables need not be set), and falls back to the raw YAML mapping on
-    parse failure.  All parseable files are returned regardless of labels.
+    Recursively globs *spec_dir* for ``*.yaml`` and ``*.yml`` files, loads
+    each as a loft-cli spec (with ``strict_env=False`` so environment
+    variables need not be set), and returns all successfully parsed specs.
+
+    This is the no-selector path used when ``--fleet`` is provided without
+    a ``--selector`` expression.
 
     Parameters
     ----------
@@ -171,8 +173,7 @@ def _scan_all_specs(
     -------
     list of (path_str, spec) tuples
         Each element is the spec file's absolute path (as a string) and the
-        parsed spec object (or raw YAML dict on failure).  Returned in
-        filesystem glob order.
+        parsed spec object.  Returned in filesystem glob order.
     """
     import yaml
 
@@ -186,19 +187,21 @@ def _scan_all_specs(
     results: list[tuple[str, Any]] = []
 
     for yaml_path in yaml_files:
-        # Load raw YAML first to confirm it's a dict; skip unparseable files.
         try:
             raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
         except yaml.YAMLError:
+            # Skip unparseable files silently.
             continue
 
         if not isinstance(raw, dict):
             continue
 
-        # Try to parse the spec properly; fall back to raw dict on failure.
+        # Parse the spec properly (passthrough env vars so no ${...} errors).
         try:
             spec = load_spec(yaml_path, strict_env=False)
         except Exception:
+            # If the spec can't be fully loaded (missing env, unknown kind, …)
+            # still include it so callers can inspect or skip it themselves.
             spec = raw
 
         results.append((str(yaml_path), spec))
