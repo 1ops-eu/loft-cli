@@ -15,6 +15,7 @@ inventory  list | show <server-id>
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -354,158 +355,86 @@ def diff_cmd(
 # ------------------------------------------------------------------ #
 
 
-def _run_doctor_on_spec(parsed_spec, ctx, p, console) -> dict:
-    """Run the doctor check for a single spec.
+@dataclasses.dataclass
+class DoctorResult:
+    """Result of running doctor on a single host."""
 
-    Returns a result dict with keys:
-        status  : "clean" | "drift" | "error"
-        drifted : list[str]  — drifted resource names
-        error   : str | None — error message if status == "error"
-    """
-    from loft_cli.agent_installer import detect_agent
-    from loft_cli.runtime.fabric_transport import FabricTransport
-
-    try:
-        login = parsed_spec.login
-        key_path = (
-            str(ctx.login_key_path) if ctx.login_key_path and ctx.login_key_path.exists() else None
-        )
-        transport = FabricTransport(
-            host=parsed_spec.host.address,
-            user=login.user,
-            port=login.port,
-            key_path=key_path,
-            password=ctx.login_password,
-        )
-
-        agent_version = detect_agent(transport)
-        if not agent_version:
-            console.print(
-                "[yellow]Agent not found on target server — attempting automatic install...[/yellow]"
-            )
-            from loft_cli.updater import update_agent
-
-            installed = update_agent(transport, console=console)
-            if not installed:
-                transport.close()
-                return {
-                    "status": "error",
-                    "drifted": [],
-                    "error": "Agent not installed and auto-install failed",
-                }
-            agent_version = detect_agent(transport)
-            if not agent_version:
-                transport.close()
-                return {
-                    "status": "error",
-                    "drifted": [],
-                    "error": "Agent installed but could not be detected",
-                }
-
-        from loft_cli_core.agent_paths import AGENT_BINARY_PATH, AGENT_DESIRED_DIR
-
-        plan_json = p.model_dump_json(indent=2)
-        plan_remote_path = f"{AGENT_DESIRED_DIR}/doctor-plan.json"
-        transport.upload_content(plan_json, plan_remote_path, sudo=True)
-
-        result = transport.run(
-            f"{AGENT_BINARY_PATH} doctor {plan_remote_path}",
-            sudo=True,
-            warn=True,
-        )
-
-        if result.stdout:
-            console.print(result.stdout.rstrip())
-        if result.stderr:
-            console.print(result.stderr.rstrip())
-
-        import json as _json
-
-        drifted: list[str] = []
-        healthy = True
-        try:
-            doctor_json = transport.download("/var/lib/loft-cli/doctor-result.json")
-            doctor_data = _json.loads(doctor_json)
-            healthy = doctor_data.get("healthy", False)
-            drifted = [
-                r.get("resource_id", r.get("id", "")) for r in doctor_data.get("drifted", []) if r
-            ]
-        except Exception:
-            pass
-
-        transport.close()
-
-        if result.return_code != 0 or not healthy:
-            return {"status": "drift", "drifted": drifted, "error": None}
-        return {"status": "clean", "drifted": [], "error": None}
-
-    except Exception as exc:
-        return {"status": "error", "drifted": [], "error": str(exc)}
+    spec_path: Path
+    spec_name: str
+    host_address: str
+    status: str  # "clean", "drifted", "error"
+    drifted_resources: list[str]
+    error: str | None
 
 
-@app.command()
-def doctor(
-    spec: Path | None = typer.Argument(None, help="Path to YAML spec file (single-host mode)"),
-    fleet: Path | None = typer.Option(None, "--fleet", help="Directory of spec files (fleet mode)"),
-    selector: str | None = typer.Option(
-        None, "--selector", help="Label selector to filter fleet specs (e.g. env=staging)"
-    ),
-    env_file: list[Path] | None = typer.Option(
-        None, "--env-file", help="Load environment variables from .env file(s) (repeatable)"
-    ),
-    passthrough: bool = typer.Option(
-        False,
-        "--passthrough",
-        help="Leave unresolved ${VAR} references unchanged instead of erroring",
-    ),
-    continue_on_error: bool = typer.Option(
-        False,
-        "--continue-on-error",
-        help="In fleet mode: continue to next host on connection/execution error",
-    ),
-) -> None:
-    """Report drift between desired spec and actual server state.
+def _select_specs(fleet_dir: Path, selector: str | None) -> list[Path]:
+    """Return sorted list of YAML spec paths from fleet_dir, optionally filtered by selector glob."""
+    import fnmatch
 
-    Single-host mode:
-        loft-cli doctor <spec.yaml>
+    pattern = selector or "*.yaml"
+    # Support both glob patterns and plain name substrings
+    candidates = sorted(fleet_dir.glob("**/*.yaml")) + sorted(fleet_dir.glob("**/*.yml"))
+    seen: set[Path] = set()
+    results: list[Path] = []
+    for p in candidates:
+        if p in seen:
+            continue
+        seen.add(p)
+        if fnmatch.fnmatch(p.name, pattern) or fnmatch.fnmatch(
+            str(p.relative_to(fleet_dir)), pattern
+        ):
+            results.append(p)
+    if not results and selector:
+        # Fallback: try matching selector as a substring of the path
+        for p in sorted(fleet_dir.glob("**/*.yaml")) + sorted(fleet_dir.glob("**/*.yml")):
+            if selector in str(p):
+                results.append(p)
+    return results
 
-    Fleet mode:
-        loft-cli doctor --fleet <dir> [--selector <expr>]
 
-    In fleet mode, all matched specs are checked and an aggregated summary
-    table is printed.  Exit code 1 if any host is drifted or errored.
-    """
-    # ── Fleet mode ──────────────────────────────────────────────────
-    if fleet is not None:
-        _doctor_fleet(
-            fleet_dir=fleet,
-            selector_expr=selector or "",
-            env_file=env_file,
-            passthrough=passthrough,
-            continue_on_error=continue_on_error,
-        )
-        return
-
-    # ── Single-host mode (original behaviour) ───────────────────────
-    if spec is None:
-        console.print("[bold red]Error:[/bold red] Provide either a spec file or --fleet <dir>.")
-        raise typer.Exit(1)
+def _run_doctor_on_host(
+    spec_path: Path,
+    passthrough: bool,
+    env_file: list[Path] | None,
+) -> DoctorResult:
+    """Run doctor against a single host spec. Returns a DoctorResult."""
+    import json as _json
 
     from loft_cli.agent_installer import detect_agent
     from loft_cli.runtime.fabric_transport import FabricTransport
+
+    spec_name = spec_path.stem
 
     try:
         parsed_spec, ctx, p, issues = _build_pipeline(
-            spec, strict_env=not passthrough, env_file=env_file
+            spec_path, strict_env=not passthrough, env_file=env_file
         )
     except Exception as e:
-        console.print(f"[bold red]Error:[/bold red] {e}")
-        raise typer.Exit(1) from None
+        return DoctorResult(
+            spec_path=spec_path,
+            spec_name=spec_name,
+            host_address=str(spec_path),
+            status="error",
+            drifted_resources=[],
+            error=f"Pipeline error: {e}",
+        )
+
+    host_address = getattr(getattr(parsed_spec, "host", None), "address", str(spec_path))
 
     if issues:
-        _print_issues(issues, stop_on_error=True)
+        from loft_cli_core.specs.validators import has_errors
 
-    # Connect to agent and run doctor
+        if has_errors(issues):
+            err_msgs = [str(i) for i in issues if i.severity == "error"]
+            return DoctorResult(
+                spec_path=spec_path,
+                spec_name=spec_name,
+                host_address=host_address,
+                status="error",
+                drifted_resources=[],
+                error=f"Validation errors: {'; '.join(err_msgs)}",
+            )
+
     try:
         login = parsed_spec.login
         key_path = (
@@ -523,26 +452,32 @@ def doctor(
         if not agent_version:
             # Agent is not installed — attempt auto-install from local binary
             console.print(
-                "[yellow]Agent not found on target server — attempting automatic install...[/yellow]"
+                f"[yellow]Agent not found on {host_address} — attempting automatic install...[/yellow]"
             )
             from loft_cli.updater import update_agent
 
             installed = update_agent(transport, console=console)
             if not installed:
-                console.print(
-                    "[bold red]No agent installed on the target server and auto-install failed.[/bold red]\n"
-                    "Install the agent first: loft-cli agent-update <host>"
-                )
                 transport.close()
-                raise typer.Exit(1)
+                return DoctorResult(
+                    spec_path=spec_path,
+                    spec_name=spec_name,
+                    host_address=host_address,
+                    status="error",
+                    drifted_resources=[],
+                    error="Agent not installed and auto-install failed",
+                )
             agent_version = detect_agent(transport)
             if not agent_version:
-                console.print(
-                    "[bold red]Agent was installed but could not be detected.[/bold red]\n"
-                    "Try running: loft-cli agent-update <host>"
-                )
                 transport.close()
-                raise typer.Exit(1)
+                return DoctorResult(
+                    spec_path=spec_path,
+                    spec_name=spec_name,
+                    host_address=host_address,
+                    status="error",
+                    drifted_resources=[],
+                    error="Agent installed but could not be detected",
+                )
 
         # Upload the current plan as the desired state
         from loft_cli_core.agent_paths import AGENT_BINARY_PATH, AGENT_DESIRED_DIR
@@ -558,37 +493,178 @@ def doctor(
             warn=True,
         )
 
-        # Print the agent's output
+        # Print the agent's raw output
         if result.stdout:
             console.print(result.stdout.rstrip())
         if result.stderr:
             console.print(result.stderr.rstrip())
 
-        # Download and display the doctor result
-        import json as _json
+        # Download and parse the doctor result
+        drifted_resources: list[str] = []
+        healthy = result.return_code == 0
 
         try:
             doctor_json = transport.download("/var/lib/loft-cli/doctor-result.json")
             doctor_data = _json.loads(doctor_json)
-            healthy = doctor_data.get("healthy", False)
-            if not healthy:
-                console.print(
-                    f"\n[bold yellow]Drift detected on {parsed_spec.host.address}.[/bold yellow]"
-                    "\nRun 'loft-cli reconcile' to bring the server back to desired state."
-                )
+            healthy = doctor_data.get("healthy", healthy)
+            drifted_resources = doctor_data.get("drifted", [])
         except Exception:
             pass  # agent output already shown
 
         transport.close()
 
-        if result.return_code != 0:
+        status = "clean" if healthy else "drifted"
+        return DoctorResult(
+            spec_path=spec_path,
+            spec_name=spec_name,
+            host_address=host_address,
+            status=status,
+            drifted_resources=drifted_resources,
+            error=None,
+        )
+
+    except Exception as e:
+        return DoctorResult(
+            spec_path=spec_path,
+            spec_name=spec_name,
+            host_address=host_address,
+            status="error",
+            drifted_resources=[],
+            error=str(e),
+        )
+
+
+def _print_fleet_doctor_table(results: list[DoctorResult]) -> None:
+    """Print a Rich summary table for fleet doctor results."""
+    table = Table(title="Fleet Doctor Summary", show_lines=True)
+    table.add_column("Spec", style="cyan", no_wrap=True)
+    table.add_column("Host", style="blue")
+    table.add_column("Status", justify="center")
+    table.add_column("Drifted Resources")
+    table.add_column("Error", style="dim")
+
+    for r in results:
+        if r.status == "clean":
+            status_text = Text("clean", style="bold green")
+        elif r.status == "drifted":
+            status_text = Text("drifted", style="bold yellow")
+        else:
+            status_text = Text("error", style="bold red")
+
+        drifted_str = ", ".join(r.drifted_resources) if r.drifted_resources else ""
+        error_str = r.error or ""
+
+        table.add_row(
+            r.spec_name,
+            r.host_address,
+            status_text,
+            drifted_str,
+            error_str,
+        )
+
+    console.print(table)
+
+
+@app.command()
+def doctor(
+    spec: Path | None = typer.Argument(None, help="Path to YAML spec file"),
+    env_file: list[Path] | None = typer.Option(
+        None, "--env-file", help="Load environment variables from .env file(s) (repeatable)"
+    ),
+    passthrough: bool = typer.Option(
+        False,
+        "--passthrough",
+        help="Leave unresolved ${VAR} references unchanged instead of erroring",
+    ),
+    fleet: Path | None = typer.Option(
+        None,
+        "--fleet",
+        help="Path to a directory of spec files to run doctor against (fleet mode)",
+    ),
+    selector: str | None = typer.Option(
+        None,
+        "--selector",
+        help="Glob pattern or substring to filter specs in fleet mode (e.g. '*.yaml', 'prod-*')",
+    ),
+    continue_on_error: bool = typer.Option(
+        False,
+        "--continue-on-error",
+        help="In fleet mode, continue checking remaining hosts even if one fails",
+    ),
+) -> None:
+    """Report drift between desired spec and actual server state.
+
+    Generates a plan from the spec, sends it to the agent's doctor
+    command, and displays which resources have drifted, are missing,
+    or are orphaned.
+
+    In fleet mode (--fleet DIR), runs doctor against all specs in the
+    directory and prints an aggregated Rich summary table.
+
+    If the agent is not yet installed on the target server, this command
+    will attempt to install it automatically using the local loft-cli-agent
+    binary before running the doctor check.
+    """
+    # --- Fleet mode ---
+    if fleet is not None:
+        if not fleet.is_dir():
+            console.print(f"[bold red]Error:[/bold red] --fleet path is not a directory: {fleet}")
             raise typer.Exit(1)
 
-    except typer.Exit:
-        raise
-    except Exception as e:
-        console.print(f"[bold red]Doctor failed:[/bold red] {e}")
-        raise typer.Exit(1) from None
+        spec_paths = _select_specs(fleet, selector)
+        if not spec_paths:
+            console.print(
+                f"[bold yellow]No specs found in {fleet}"
+                + (f" matching '{selector}'" if selector else "")
+                + "[/bold yellow]"
+            )
+            raise typer.Exit(0)
+
+        selector_label = selector or "*"
+        console.print(f"[bold]Fleet doctor:[/bold] {selector_label} ({len(spec_paths)} host(s))")
+
+        results: list[DoctorResult] = []
+        for sp in spec_paths:
+            console.rule(f"[dim]{sp.name}[/dim]")
+            dr = _run_doctor_on_host(sp, passthrough=passthrough, env_file=env_file)
+            results.append(dr)
+            if dr.status == "error" and not continue_on_error:
+                console.print(
+                    f"[bold red]Stopping fleet doctor due to error on {dr.spec_name}.[/bold red] "
+                    "Use --continue-on-error to keep going."
+                )
+                break
+
+        console.rule()
+        _print_fleet_doctor_table(results)
+
+        any_bad = any(r.status in ("drifted", "error") for r in results)
+        if any_bad:
+            raise typer.Exit(1)
+        return
+
+    # --- Single spec mode ---
+    if spec is None:
+        console.print(
+            "[bold red]Error:[/bold red] Provide a spec file or use --fleet <dir> for fleet mode."
+        )
+        raise typer.Exit(1)
+
+    if not spec.exists():
+        console.print(f"[bold red]Error:[/bold red] Spec file not found: {spec}")
+        raise typer.Exit(1)
+
+    dr = _run_doctor_on_host(spec, passthrough=passthrough, env_file=env_file)
+
+    if dr.status == "drifted":
+        console.print(
+            f"\n[bold yellow]Drift detected on {dr.host_address}.[/bold yellow]"
+            "\nRun 'loft-cli reconcile' to bring the server back to desired state."
+        )
+        raise typer.Exit(1)
+    elif dr.status == "error":
+        console.print(f"[bold red]Doctor failed:[/bold red] {dr.error}")
+        raise typer.Exit(1)
 
 
 def _doctor_fleet(
