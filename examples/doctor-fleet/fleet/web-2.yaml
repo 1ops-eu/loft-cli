@@ -1,0 +1,34 @@
+kind: bootstrap
+
+meta:
+  name: web-2
+  description: Web server node 2
+
+host:
+  name: web-2
+  address: 203.0.113.12
+  os_family: debian
+
+login:
+  user: root
+  private_key: ~/.ssh/id_ed25519
+  port: 22
+
+admin_user:
+  name: deploy
+  groups:
+    - sudo
+  pubkeys:
+    - ~/.ssh/id_ed25519.pub
+
+ssh:
+  port: 2222
+  disable_root_login: true
+  disable_password_auth: true
+
+firewall:
+  provider: ufw
+  allow_ports:
+    - 2222
+    - 80
+    - 443

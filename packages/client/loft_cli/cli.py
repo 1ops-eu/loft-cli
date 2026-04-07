@@ -30,6 +30,38 @@ from rich.text import Text
 if TYPE_CHECKING:
     from loft_cli.local.inventory_db import InventoryDB
 
+
+@dataclass
+class DoctorResult:
+    """Result of running doctor on a single host."""
+
+    spec_name: str
+    host_address: str
+    status: str  # "clean" | "drifted" | "error"
+    drifted_resources: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
+def _select_specs(fleet_dir: Path, selector: str | None) -> list[Path]:
+    """Return YAML spec paths from *fleet_dir*, filtered by *selector* glob.
+
+    Parameters
+    ----------
+    fleet_dir:
+        Directory containing one or more YAML spec files.
+    selector:
+        Optional glob pattern to filter spec file names (e.g. ``"web-*.yaml"``).
+        When None, all ``*.yaml`` and ``*.yml`` files are returned.
+    """
+    if selector:
+        matches = list(fleet_dir.glob(selector))
+    else:
+        matches = list(fleet_dir.glob("*.yaml")) + list(fleet_dir.glob("*.yml"))
+
+    # Sort for deterministic ordering
+    return sorted(set(matches))
+
+
 app = typer.Typer(
     name="loft-cli",
     help=(
@@ -395,12 +427,24 @@ def diff_cmd(
 # ------------------------------------------------------------------ #
 
 
-def _run_doctor_on_host(parsed_spec, ctx, p, transport) -> DoctorResult:
-    """Run agent doctor against a single host and return a DoctorResult.
+def _run_doctor_on_host(parsed_spec, ctx, p, console) -> DoctorResult:
+    """Run the agent doctor command on a single host and return a DoctorResult.
 
-    *transport* must already be open.  The caller is responsible for
-    closing it.  This function does NOT raise — all exceptions are
-    captured into DoctorResult.status == 'error'.
+    This helper extracts the single-host doctor logic so it can be called
+    both from the scalar doctor path and from the fleet loop.
+
+    Parameters
+    ----------
+    parsed_spec:
+        The parsed spec for this host.
+    ctx:
+        The normalised context for this spec.
+    p:
+        The compiled plan for this spec.
+    console:
+        Rich console for output.
+
+    Returns a DoctorResult with status "clean", "drifted", or "error".
     """
     import json as _json
 
@@ -408,6 +452,30 @@ def _run_doctor_on_host(parsed_spec, ctx, p, transport) -> DoctorResult:
     from loft_cli_core.agent_paths import AGENT_BINARY_PATH, AGENT_DESIRED_DIR
 
     spec_path = Path(getattr(parsed_spec, "_source_path", "") or "")
+
+    spec_name = parsed_spec.meta.name
+    host_address = parsed_spec.host.address
+
+    login = parsed_spec.login
+    key_path = (
+        str(ctx.login_key_path) if ctx.login_key_path and ctx.login_key_path.exists() else None
+    )
+
+    try:
+        transport = FabricTransport(
+            host=host_address,
+            user=login.user,
+            port=login.port,
+            key_path=key_path,
+            password=ctx.login_password,
+        )
+    except Exception as e:
+        return DoctorResult(
+            spec_name=spec_name,
+            host_address=host_address,
+            status="error",
+            error=str(e),
+        )
 
     try:
         agent_version = detect_agent(transport)
@@ -428,6 +496,13 @@ def _run_doctor_on_host(parsed_spec, ctx, p, transport) -> DoctorResult:
                         "Install the agent first: loft-cli agent-update <host>"
                     ),
                 )
+                transport.close()
+                return DoctorResult(
+                    spec_name=spec_name,
+                    host_address=host_address,
+                    status="error",
+                    error="Agent not installed and auto-install failed",
+                )
             agent_version = detect_agent(transport)
             if not agent_version:
                 return DoctorResult(
@@ -438,6 +513,16 @@ def _run_doctor_on_host(parsed_spec, ctx, p, transport) -> DoctorResult:
                         "Try running: loft-cli agent-update <host>"
                     ),
                 )
+                transport.close()
+                return DoctorResult(
+                    spec_name=spec_name,
+                    host_address=host_address,
+                    status="error",
+                    error="Agent installed but not detectable",
+                )
+
+        # Upload the current plan as the desired state
+        from loft_cli_core.agent_paths import AGENT_BINARY_PATH, AGENT_DESIRED_DIR
 
         # Upload plan
         plan_json = p.model_dump_json(indent=2)
@@ -457,60 +542,73 @@ def _run_doctor_on_host(parsed_spec, ctx, p, transport) -> DoctorResult:
         if result.stderr:
             console.print(result.stderr.rstrip())
 
-        # Parse doctor result JSON to determine drift
-        drifted: list[str] = []
+        # Download and parse the doctor result
+        drifted_resources: list[str] = []
+        healthy = result.return_code == 0
         try:
             doctor_json = transport.download("/var/lib/loft-cli/doctor-result.json")
             doctor_data = _json.loads(doctor_json)
-            healthy = doctor_data.get("healthy", False)
-            drifted = doctor_data.get("drifted_resources", [])
-            if not healthy:
-                return DoctorResult(
-                    filepath=spec_path,
-                    status="drift",
-                    drifted_resources=drifted,
-                )
+            healthy = doctor_data.get("healthy", healthy)
+            # Collect names of drifted resources for the fleet summary table
+            for resource in doctor_data.get("resources", []):
+                if resource.get("status") not in ("ok", "in_sync", "unchanged"):
+                    drifted_resources.append(resource.get("id") or resource.get("step_id", "?"))
         except Exception:
-            # agent output already printed; fall through to return_code check
-            if result.return_code != 0:
-                return DoctorResult(
-                    filepath=spec_path,
-                    status="drift",
-                )
+            pass  # agent stdout output already shown; rely on return_code
 
-        if result.return_code != 0:
+        transport.close()
+
+        if not healthy:
+            console.print(
+                f"\n[bold yellow]Drift detected on {host_address}.[/bold yellow]"
+                "\nRun 'loft-cli reconcile' to bring the server back to desired state."
+            )
             return DoctorResult(
-                filepath=spec_path,
-                status="drift",
-                drifted_resources=drifted,
+                spec_name=spec_name,
+                host_address=host_address,
+                status="drifted",
+                drifted_resources=drifted_resources,
             )
 
-        return DoctorResult(filepath=spec_path, status="clean")
+        return DoctorResult(
+            spec_name=spec_name,
+            host_address=host_address,
+            status="clean",
+        )
 
-    except Exception as exc:  # noqa: BLE001
-        return DoctorResult(filepath=spec_path, status="error", error=str(exc))
+    except Exception as e:
+        transport.close()
+        return DoctorResult(
+            spec_name=spec_name,
+            host_address=host_address,
+            status="error",
+            error=str(e),
+        )
 
 
 @app.command()
 def doctor(
     spec: Path | None = typer.Argument(
-        None, help="Path to YAML spec file (omit when using --fleet)"
+        None,
+        help="Path to a single YAML spec file. Omit when using --fleet.",
     ),
     fleet: Path | None = typer.Option(
         None,
         "--fleet",
-        help="Directory containing multiple YAML spec files to run doctor against",
-        exists=False,
+        help="Directory of YAML spec files to run doctor against (fleet mode).",
     ),
-    selector: str = typer.Option(
-        "",
+    selector: str | None = typer.Option(
+        None,
         "--selector",
-        help="Filter fleet specs by filename stem substring (case-insensitive)",
+        help=(
+            "Glob pattern to filter spec files when using --fleet "
+            "(e.g. 'web-*.yaml'). Defaults to all *.yaml / *.yml files."
+        ),
     ),
     continue_on_error: bool = typer.Option(
         False,
         "--continue-on-error",
-        help="Continue checking remaining hosts even if one fails (fleet mode)",
+        help="In fleet mode, continue checking remaining hosts even if one errors.",
     ),
     env_file: list[Path] | None = typer.Option(
         None, "--env-file", help="Load environment variables from .env file(s) (repeatable)"
@@ -523,173 +621,148 @@ def doctor(
 ) -> None:
     """Report drift between desired spec and actual server state.
 
-    spec_path: Path
-    spec_name: str
-    host_address: str
-    status: str  # "clean", "drifted", "error"
-    drifted_resources: list[str]
-    error: str | None
-
-
-def _select_specs(fleet_dir: Path, selector: str | None) -> list[Path]:
-    """Return sorted list of YAML spec paths from fleet_dir, optionally filtered by selector glob."""
-    import fnmatch
-
-    pattern = selector or "*.yaml"
-    # Support both glob patterns and plain name substrings
-    candidates = sorted(fleet_dir.glob("**/*.yaml")) + sorted(fleet_dir.glob("**/*.yml"))
-    seen: set[Path] = set()
-    results: list[Path] = []
-    for p in candidates:
-        if p in seen:
-            continue
-        seen.add(p)
-        if fnmatch.fnmatch(p.name, pattern) or fnmatch.fnmatch(
-            str(p.relative_to(fleet_dir)), pattern
-        ):
-            results.append(p)
-    if not results and selector:
-        # Fallback: try matching selector as a substring of the path
-        for p in sorted(fleet_dir.glob("**/*.yaml")) + sorted(fleet_dir.glob("**/*.yml")):
-            if selector in str(p):
-                results.append(p)
-    return results
-
-
-def _run_doctor_on_host(
-    spec_path: Path,
-    passthrough: bool,
-    env_file: list[Path] | None,
-) -> DoctorResult:
-    """Run doctor against a single host spec. Returns a DoctorResult."""
-    import json as _json
+    Generates a plan from the spec, sends it to the agent's doctor
+    command, and displays which resources have drifted, are missing,
+    or are orphaned.
 
     If the agent is not yet installed on the target server, this command
     will attempt to install it automatically using the local loft-cli-agent
     binary before running the doctor check.
 
-    Fleet mode: pass --fleet <directory> to run doctor against every YAML
-    spec found in that directory.  Use --selector to filter by filename.
-    """
-    from loft_cli.runtime.fabric_transport import FabricTransport
+    **Single-host mode** (default):
 
-    # ── Fleet mode ─────────────────────────────────────────────────────────
+        loft-cli doctor myserver.yaml
+
+    **Fleet mode** — check all specs in a directory:
+
+        loft-cli doctor --fleet ./fleet/
+        loft-cli doctor --fleet ./fleet/ --selector 'web-*.yaml'
+    """
+    # ---- validate argument combinations ----
+    if fleet is None and spec is None:
+        console.print("[bold red]Error:[/bold red] Provide a spec file or use --fleet <dir>.")
+        raise typer.Exit(1)
+
+    if fleet is not None and spec is not None:
+        console.print(
+            "[bold red]Error:[/bold red] Cannot combine a positional spec file with --fleet. "
+            "Use one or the other."
+        )
+        raise typer.Exit(1)
+
+    # ---- fleet mode ----
     if fleet is not None:
         if not fleet.is_dir():
-            console.print(f"[bold red]Fleet directory not found:[/bold red] {fleet}")
+            console.print(f"[bold red]Error:[/bold red] --fleet path is not a directory: {fleet}")
             raise typer.Exit(1)
 
-        spec_paths = select_specs(fleet, selector)
+        spec_paths = _select_specs(fleet, selector)
         if not spec_paths:
             console.print(
-                f"[bold yellow]No YAML specs found in {fleet}"
-                + (f" matching selector '{selector}'" if selector else "")
-                + "[/bold yellow]"
+                f"[bold red]No spec files found[/bold red] in {fleet}"
+                + (f" matching '{selector}'" if selector else "")
             )
-            raise typer.Exit(0)
+            raise typer.Exit(1)
 
-        console.print(
-            f"[bold]Running doctor on {len(spec_paths)} spec(s) in {fleet}[/bold]"
-            + (f" (selector: '{selector}')" if selector else "")
-        )
+        label = selector or "*.yaml"
+        console.print(f"[bold]Fleet doctor:[/bold] {label} ({len(spec_paths)} host(s))\n")
 
-        results: list[DoctorResult] = []
+        fleet_results: list[DoctorResult] = []
         for spec_path in spec_paths:
-            console.print(f"\n[dim]--- {spec_path} ---[/dim]")
+            console.print(f"[bold cyan]--- {spec_path.name} ---[/bold cyan]")
             try:
                 parsed_spec, ctx, p, issues = _build_pipeline(
                     spec_path, strict_env=not passthrough, env_file=env_file
                 )
             except Exception as e:
-                results.append(DoctorResult(filepath=spec_path, status="error", error=str(e)))
-                console.print(f"[red]Parse/build error: {e}[/red]")
+                console.print(f"  [bold red]Pipeline error:[/bold red] {e}")
+                dr = DoctorResult(
+                    spec_name=spec_path.stem,
+                    host_address="unknown",
+                    status="error",
+                    error=str(e),
+                )
+                fleet_results.append(dr)
                 if not continue_on_error:
                     break
                 continue
 
             if issues:
-                try:
-                    _print_issues(issues, stop_on_error=True)
-                except SystemExit:
-                    results.append(
-                        DoctorResult(
-                            filepath=spec_path,
-                            status="error",
-                            error="Validation errors",
-                        )
-                    )
-                    if not continue_on_error:
-                        break
-                    continue
+                _print_issues(issues, stop_on_error=False)
 
-            try:
-                login = parsed_spec.login
-                key_path = (
-                    str(ctx.login_key_path)
-                    if ctx.login_key_path and ctx.login_key_path.exists()
-                    else None
-                )
-                transport = FabricTransport(
-                    host=parsed_spec.host.address,
-                    user=login.user,
-                    port=login.port,
-                    key_path=key_path,
-                    password=ctx.login_password,
-                )
-                dr = _run_doctor_on_host(parsed_spec, ctx, p, transport)
-                transport.close()
-            except Exception as e:
-                dr = DoctorResult(filepath=spec_path, status="error", error=str(e))
+            dr = _run_doctor_on_host(parsed_spec, ctx, p, console)
+            fleet_results.append(dr)
 
-            results.append(dr)
             if dr.status == "error" and not continue_on_error:
+                console.print(
+                    "\n[bold red]Aborting fleet doctor due to error "
+                    "(use --continue-on-error to keep going).[/bold red]"
+                )
                 break
 
-        # Print Rich summary table
-        console.print()
-        table = Table(
-            show_header=True,
-            header_style="bold",
-            box=None,
-            padding=(0, 1),
-            title="Doctor Summary",
-        )
-        table.add_column("Spec", min_width=30)
-        table.add_column("Status", min_width=8)
-        table.add_column("Drifted Resources")
+            console.print()
 
-        status_styles = {"clean": "green", "drift": "yellow", "error": "red"}
-        for dr in results:
-            style = status_styles.get(dr.status, "white")
-            drift_str = (
-                ", ".join(dr.drifted_resources) if dr.drifted_resources else (dr.error or "")
-            )
+        # Aggregated summary table
+        console.print("\n[bold]Fleet Doctor Summary[/bold]")
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+        table.add_column("Spec", min_width=20)
+        table.add_column("Host", min_width=15)
+        table.add_column("Status", width=10)
+        table.add_column("Drifted Resources")
+        table.add_column("Error")
+
+        any_bad = False
+        for dr in fleet_results:
+            if dr.status == "clean":
+                status_text = Text("clean", style="green")
+            elif dr.status == "drifted":
+                status_text = Text("drifted", style="yellow")
+                any_bad = True
+            else:
+                status_text = Text("error", style="red")
+                any_bad = True
+
             table.add_row(
-                str(dr.filepath),
-                Text(dr.status, style=style),
-                drift_str,
+                dr.spec_name,
+                dr.host_address,
+                status_text,
+                ", ".join(dr.drifted_resources) if dr.drifted_resources else "",
+                dr.error or "",
             )
 
         console.print(table)
 
-        any_bad = any(dr.status in ("drift", "error") for dr in results)
+        total = len(fleet_results)
+        clean = sum(1 for r in fleet_results if r.status == "clean")
+        drifted = sum(1 for r in fleet_results if r.status == "drifted")
+        errors = sum(1 for r in fleet_results if r.status == "error")
+        console.print(
+            f"\n[bold]Summary:[/bold] {total} host(s) — "
+            f"[green]{clean} clean[/green], "
+            f"[yellow]{drifted} drifted[/yellow], "
+            f"[red]{errors} error(s)[/red]"
+        )
+
         if any_bad:
             raise typer.Exit(1)
         return
 
-    # ── Single-spec mode ────────────────────────────────────────────────────
-    if spec is None:
-        console.print("[bold red]Error:[/bold red] Provide a spec path or use --fleet <directory>.")
-        raise typer.Exit(1)
-
-    if not spec.exists():
-        console.print(f"[bold red]Spec not found:[/bold red] {spec}")
-        raise typer.Exit(1)
+    # ---- single-host mode ----
+    assert spec is not None  # guarded above
 
     try:
         parsed_spec, ctx, p, issues = _build_pipeline(
-            spec_path, strict_env=not passthrough, env_file=env_file
+            spec, strict_env=not passthrough, env_file=env_file
         )
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(1) from None
+
+    if issues:
+        _print_issues(issues, stop_on_error=True)
+
+    try:
+        dr = _run_doctor_on_host(parsed_spec, ctx, p, console)
     except Exception as e:
         return DoctorResult(
             spec_path=spec_path,
@@ -822,77 +895,11 @@ def _doctor_fleet(
         console.print(f"[bold red]Selector error:[/bold red] {e}")
         raise typer.Exit(1) from None
 
-    label = selector_expr if selector_expr else "(all)"
-    console.print(f"\n[bold]Fleet doctor:[/bold] {label} ({len(matches)} hosts)")
+    if dr.status == "error":
+        console.print(f"[bold red]Doctor failed:[/bold red] {dr.error}")
+        raise typer.Exit(1)
 
-    # ── Per-spec doctor ──────────────────────────────────────────────
-    rows: list[tuple[str, str, str, str]] = []  # (filepath, status, drifted, error)
-    any_problem = False
-
-    for filepath, parsed_spec in matches:
-        # Build pipeline for this spec (re-parse with full pipeline for ctx/plan)
-        try:
-            spec_path = Path(filepath)
-            _, ctx, p, issues = _build_pipeline(
-                spec_path,
-                strict_env=not passthrough,
-                env_file=env_file,
-            )
-        except Exception as e:
-            error_msg = str(e)[:80]
-            rows.append((filepath, "error", "—", error_msg))
-            any_problem = True
-            if not continue_on_error:
-                break
-            continue
-
-        console.print(f"  Checking [dim]{filepath}[/dim] ...")
-        result = _run_doctor_on_spec(parsed_spec, ctx, p, console)
-
-        if result["status"] == "clean":
-            status_str = "[green]✓ clean[/green]"
-            drifted_str = "—"
-            error_str = "—"
-        elif result["status"] == "drift":
-            status_str = "[yellow]⚠ drift[/yellow]"
-            drifted_str = ", ".join(result["drifted"]) or "unknown"
-            error_str = "—"
-            any_problem = True
-        else:  # error
-            status_str = "[red]✗ error[/red]"
-            drifted_str = "—"
-            error_str = (result["error"] or "")[:60]
-            any_problem = True
-            if not continue_on_error:
-                rows.append((filepath, status_str, drifted_str, error_str))
-                break
-
-        rows.append((filepath, status_str, drifted_str, error_str))
-
-    # ── Summary table ────────────────────────────────────────────────
-    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
-    table.add_column("Spec", min_width=30)
-    table.add_column("Status", min_width=10)
-    table.add_column("Drifted Resources", min_width=25)
-    table.add_column("Error", min_width=20)
-
-    for filepath, status_str, drifted_str, error_str in rows:
-        table.add_row(filepath, status_str, drifted_str, error_str)
-
-    console.print(table)
-
-    # Counts
-    clean_count = sum(1 for _, s, _, _ in rows if "clean" in s)
-    drift_count = sum(1 for _, s, _, _ in rows if "drift" in s)
-    error_count = sum(1 for _, s, _, _ in rows if "error" in s)
-    console.print(
-        f"\n{len(rows)} hosts checked: "
-        f"[green]{clean_count} clean[/green], "
-        f"[yellow]{drift_count} drifted[/yellow], "
-        f"[red]{error_count} errored[/red]"
-    )
-
-    if any_problem:
+    if dr.status == "drifted":
         raise typer.Exit(1)
 
 
