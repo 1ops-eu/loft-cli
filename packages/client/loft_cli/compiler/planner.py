@@ -630,8 +630,8 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
                 "Ensure ~/.goss/ directory exists on remote",
                 R,
                 StepKind.SSH_COMMAND,
-                command="mkdir -p ~/.goss",
-                sudo=False,
+                command=f"mkdir -p /home/{spec.admin_user.name}/.goss && chown {spec.admin_user.name}:{spec.admin_user.name} /home/{spec.admin_user.name}/.goss",
+                sudo=True,
                 tags=["goss"],
             )
         )
