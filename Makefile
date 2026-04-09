@@ -95,7 +95,7 @@ fmt:
 
 validate-example:
 	@failed=0; \
-	for spec in $$(find examples -name '*.yaml' ! -name '*.goss.yaml' ! -name 'policy.yaml' | sort); do \
+	for spec in $$(find examples -name '*.yaml' ! -name '*.goss.yaml' ! -name 'policy.yaml' ! -path 'examples/blueprints/*' | sort); do \
 	  name=$$(basename "$$spec"); \
 	  case "$$name" in \
 	    bootstrap-env-vars.yaml|bootstrap-password-login.yaml) flags="--passthrough" ;; \
@@ -108,7 +108,7 @@ validate-example:
 
 plan-example:
 	@failed=0; \
-	for spec in $$(find examples -name '*.yaml' ! -name '*.goss.yaml' ! -name 'policy.yaml' | sort); do \
+	for spec in $$(find examples -name '*.yaml' ! -name '*.goss.yaml' ! -name 'policy.yaml' ! -path 'examples/blueprints/*' | sort); do \
 	  name=$$(basename "$$spec"); \
 	  case "$$name" in \
 	    bootstrap-env-vars.yaml|bootstrap-password-login.yaml) flags="--passthrough" ;; \
@@ -121,7 +121,7 @@ plan-example:
 
 docs-example:
 	@failed=0; \
-	for spec in $$(find examples -name '*.yaml' ! -name '*.goss.yaml' ! -name 'policy.yaml' | sort); do \
+	for spec in $$(find examples -name '*.yaml' ! -name '*.goss.yaml' ! -name 'policy.yaml' ! -path 'examples/blueprints/*' | sort); do \
 	  name=$$(basename "$$spec"); \
 	  case "$$name" in \
 	    bootstrap-env-vars.yaml|bootstrap-password-login.yaml) flags="--passthrough" ;; \

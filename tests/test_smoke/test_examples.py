@@ -37,12 +37,18 @@ _NON_SPEC_FILES = {
 
 
 def _discover_example_specs() -> list[Path]:
-    """Return all .yaml spec files under examples/, excluding goss specs and non-spec files."""
+    """Return all .yaml spec files under examples/, excluding goss specs, non-spec files,
+    and blueprint specs (which are parameterized templates requiring input binding)."""
+    blueprints_dir = EXAMPLES_ROOT / "blueprints"
     specs = []
     for p in sorted(EXAMPLES_ROOT.rglob("*.yaml")):
         if ".goss." in p.name:
             continue
         if p.name in _NON_SPEC_FILES:
+            continue
+        # Blueprint specs use ${variable} placeholders for typed fields (e.g. port as int)
+        # and cannot be validated standalone without input binding.
+        if p.is_relative_to(blueprints_dir):
             continue
         specs.append(p)
     return specs

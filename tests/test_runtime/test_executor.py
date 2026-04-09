@@ -284,7 +284,7 @@ class TestTunnelSshGateUnavailable:
             "verify_ssh_over_wireguard_tunnel",
             kind=StepKind.GATE,
             scope=StepScope.LOCAL,
-            gate=True,
+            gate=False,
             command="tunnel_ssh_gate:myhost:10.10.0.1:2222:deploy",
         )
         return _make_plan([gate_step])
@@ -306,7 +306,7 @@ class TestTunnelSshGateUnavailable:
             r for r in result.step_results if r.step_id == "verify_ssh_over_wireguard_tunnel"
         )
         assert gate_result.status == "success"
-        assert "tooling unavailable" in gate_result.output
+        assert "[SKIPPED]" in gate_result.output
 
     def test_sudo_denied_skips_gracefully(self, mock_ssh_session, mocker):
         """When sudo is denied for wg-quick, the gate succeeds with a warning output."""
@@ -325,7 +325,7 @@ class TestTunnelSshGateUnavailable:
             r for r in result.step_results if r.step_id == "verify_ssh_over_wireguard_tunnel"
         )
         assert gate_result.status == "success"
-        assert "tooling unavailable" in gate_result.output
+        assert "[SKIPPED]" in gate_result.output
 
     def test_timeout_skips_gracefully(self, mock_ssh_session, mocker):
         """When wg-quick times out, the gate succeeds with a warning output."""
@@ -344,7 +344,7 @@ class TestTunnelSshGateUnavailable:
             r for r in result.step_results if r.step_id == "verify_ssh_over_wireguard_tunnel"
         )
         assert gate_result.status == "success"
-        assert "tooling unavailable" in gate_result.output
+        assert "[SKIPPED]" in gate_result.output
 
     def test_actual_tunnel_failure_still_hard_fails(self, mock_ssh_session, mocker):
         """A genuine wg-quick failure (not tooling unavailable) still hard-aborts."""

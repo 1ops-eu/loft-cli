@@ -196,9 +196,7 @@ class TestSelectSpecs:
 
         # Write in non-alphabetical insertion order
         for name in ("worker-03", "worker-01", "worker-02"):
-            self._write_spec(
-                fleet_dir / f"{name}.yaml", name, labels={"role": "worker"}
-            )
+            self._write_spec(fleet_dir / f"{name}.yaml", name, labels={"role": "worker"})
 
         results = select_specs(str(fleet_dir), "role=worker")
         paths = [r[0] for r in results]

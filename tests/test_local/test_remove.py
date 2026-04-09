@@ -88,17 +88,12 @@ class TestRemoveHost:
         console = MagicMock()
         remove_host("testhost", console=console)
 
-        mock_down.assert_called_once_with("testhost")
-
-        # Just verify the mock was called — the result from the first call
-        # already confirmed the tunnel_down action was included
-        remove_host("testhost", console=MagicMock())
-        # Instead, just verify via the first call's results
-        assert mock_down.called
+        # remove_host passes (host_name, provider) — provider is None for bare host identifiers
+        mock_down.assert_called_once_with("testhost", None)
 
     @patch("loft_cli.local.tunnel.tunnel_down", return_value=(True, "not active"))
     def test_returns_all_four_actions(self, _mock_down, tmp_path):
-        """remove_host should always return results for all 4 actions."""
+        """remove_host should always return results for the core actions."""
         console = MagicMock()
         results = remove_host("testhost", console=console)
 
@@ -118,8 +113,8 @@ class TestRemoveHost:
 
         tunnel_result = next(r for r in results if r["action"] == "tunnel_down")
         assert tunnel_result["status"] == "error"
-        # Other actions should still be present
-        assert len(results) == 4
+        # Other actions should still be present (tunnel_down, wireguard_state, ssh_config, ssh_keys, inventory)
+        assert len(results) == 5
 
     @patch("loft_cli.local.tunnel.tunnel_down", return_value=(True, "not active"))
     def test_inventory_skipped_when_no_record(self, _mock_down, tmp_path):
@@ -146,5 +141,5 @@ class TestRemoveHost:
     def test_creates_console_if_none(self, _mock_down, tmp_path):
         """If console=None, remove_host should create one internally."""
         results = remove_host("testhost", console=None)
-        # Should not raise and should return results
-        assert len(results) == 4
+        # Should not raise and should return results (tunnel_down, wireguard_state, ssh_config, ssh_keys, inventory)
+        assert len(results) == 5

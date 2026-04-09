@@ -12,9 +12,8 @@ Coverage:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 
-import pytest
 from typer.testing import CliRunner
 
 from loft_cli.cli import app
@@ -86,14 +85,14 @@ class TestFleetApplyIterationOrder:
         ]
 
         apply_single_mock = mocker.patch("loft_cli.cli._apply_single")
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
 
-        result = runner.invoke(app, [
-            "apply", "--fleet", str(fleet_dir), "--selector", "role=worker"
-        ])
+        result = runner.invoke(
+            app, ["apply", "--fleet", str(fleet_dir), "--selector", "role=worker"]
+        )
 
         assert result.exit_code == 0
         assert apply_single_mock.call_count == 2
@@ -113,17 +112,17 @@ class TestFleetApplyIterationOrder:
         _write_spec(spec_file, "worker-01", labels={"role": "worker"})
 
         mocker.patch("loft_cli.cli._apply_single")  # no exception → success
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch(
             "loft_cli.local.selector.select_specs",
             return_value=[(str(spec_file), MagicMock())],
         )
 
-        result = runner.invoke(app, [
-            "apply", "--fleet", str(fleet_dir), "--selector", "role=worker"
-        ])
+        result = runner.invoke(
+            app, ["apply", "--fleet", str(fleet_dir), "--selector", "role=worker"]
+        )
 
         assert result.exit_code == 0
         assert "1 succeeded" in result.output
@@ -159,22 +158,20 @@ class TestFleetApplyFailureHandling:
         apply_single_mock = mocker.patch(
             "loft_cli.cli._apply_single", side_effect=_failing_apply_single
         )
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
 
-        result = runner.invoke(app, [
-            "apply", "--fleet", str(fleet_dir), "--selector", "role=worker"
-        ])
+        result = runner.invoke(
+            app, ["apply", "--fleet", str(fleet_dir), "--selector", "role=worker"]
+        )
 
         assert result.exit_code != 0
         # Only the first _apply_single should have been called
         assert apply_single_mock.call_count == 1
 
-    def test_first_spec_fails_with_continue_on_error_second_attempted(
-        self, tmp_path, mocker
-    ):
+    def test_first_spec_fails_with_continue_on_error_second_attempted(self, tmp_path, mocker):
         """With --continue-on-error, second spec is attempted even if first fails."""
         fleet_dir = tmp_path / "fleet"
         fleet_dir.mkdir()
@@ -200,24 +197,29 @@ class TestFleetApplyFailureHandling:
         apply_single_mock = mocker.patch(
             "loft_cli.cli._apply_single", side_effect=_first_fails_second_ok
         )
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
 
-        result = runner.invoke(app, [
-            "apply", "--fleet", str(fleet_dir), "--selector", "role=worker",
-            "--continue-on-error"
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "apply",
+                "--fleet",
+                str(fleet_dir),
+                "--selector",
+                "role=worker",
+                "--continue-on-error",
+            ],
+        )
 
         # Should have attempted both specs
         assert apply_single_mock.call_count == 2
         # Exit code 1 because one failed
         assert result.exit_code != 0
 
-    def test_continue_on_error_summary_shows_1_succeeded_1_failed(
-        self, tmp_path, mocker
-    ):
+    def test_continue_on_error_summary_shows_1_succeeded_1_failed(self, tmp_path, mocker):
         """Summary output shows '1 succeeded, 1 failed' when first fails, second succeeds."""
         fleet_dir = tmp_path / "fleet"
         fleet_dir.mkdir()
@@ -240,15 +242,22 @@ class TestFleetApplyFailureHandling:
                 raise SystemExit(1)
 
         mocker.patch("loft_cli.cli._apply_single", side_effect=_first_fails)
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
 
-        result = runner.invoke(app, [
-            "apply", "--fleet", str(fleet_dir), "--selector", "role=worker",
-            "--continue-on-error"
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "apply",
+                "--fleet",
+                str(fleet_dir),
+                "--selector",
+                "role=worker",
+                "--continue-on-error",
+            ],
+        )
 
         # Summary must mention 1 succeeded and 1 failed
         assert "1 succeeded" in result.output
@@ -263,17 +272,17 @@ class TestFleetApplyFailureHandling:
         _write_spec(spec_file, "worker-01", labels={"role": "worker"})
 
         mocker.patch("loft_cli.cli._apply_single", side_effect=SystemExit(1))
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch(
             "loft_cli.local.selector.select_specs",
             return_value=[(str(spec_file), MagicMock())],
         )
 
-        result = runner.invoke(app, [
-            "apply", "--fleet", str(fleet_dir), "--selector", "role=worker"
-        ])
+        result = runner.invoke(
+            app, ["apply", "--fleet", str(fleet_dir), "--selector", "role=worker"]
+        )
 
         assert result.exit_code != 0
 
@@ -297,14 +306,14 @@ class TestFleetApplyDryRun:
         ]
 
         apply_single_mock = mocker.patch("loft_cli.cli._apply_single")
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
 
-        result = runner.invoke(app, [
-            "apply", "--fleet", str(fleet_dir), "--selector", "role=worker", "--dry-run"
-        ])
+        result = runner.invoke(
+            app, ["apply", "--fleet", str(fleet_dir), "--selector", "role=worker", "--dry-run"]
+        )
 
         assert result.exit_code == 0
         # _apply_single signature: (parsed_spec, ctx, p, mode, dry_run, console)
@@ -323,17 +332,17 @@ class TestFleetApplyDryRun:
         _write_spec(spec_file, "worker-01", labels={"role": "worker"})
 
         apply_single_mock = mocker.patch("loft_cli.cli._apply_single")
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch(
             "loft_cli.local.selector.select_specs",
             return_value=[(str(spec_file), MagicMock())],
         )
 
-        result = runner.invoke(app, [
-            "apply", "--fleet", str(fleet_dir), "--selector", "role=worker"
-        ])
+        result = runner.invoke(
+            app, ["apply", "--fleet", str(fleet_dir), "--selector", "role=worker"]
+        )
 
         assert result.exit_code == 0
         positional_args = apply_single_mock.call_args_list[0][0]
@@ -347,9 +356,9 @@ class TestSingleSpecApplyUnchanged:
     def test_single_spec_apply_invokes_apply_single_once(self, bootstrap_yaml, mocker):
         """Single-spec apply still calls _apply_single exactly once without fleet."""
         apply_single_mock = mocker.patch("loft_cli.cli._apply_single")
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
 
         result = runner.invoke(app, ["apply", str(bootstrap_yaml)])
 
@@ -359,9 +368,9 @@ class TestSingleSpecApplyUnchanged:
     def test_single_spec_apply_passes_dry_run_flag(self, bootstrap_yaml, mocker):
         """Single-spec apply with --dry-run passes True to _apply_single."""
         apply_single_mock = mocker.patch("loft_cli.cli._apply_single")
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
 
         result = runner.invoke(app, ["apply", str(bootstrap_yaml), "--dry-run"])
 
@@ -372,10 +381,10 @@ class TestSingleSpecApplyUnchanged:
 
     def test_single_spec_no_fleet_flag_no_selector_called(self, bootstrap_yaml, mocker):
         """Single-spec apply does NOT invoke select_specs at all."""
-        apply_single_mock = mocker.patch("loft_cli.cli._apply_single")
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch("loft_cli.cli._apply_single")
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         select_mock = mocker.patch("loft_cli.local.selector.select_specs")
 
         runner.invoke(app, ["apply", str(bootstrap_yaml)])

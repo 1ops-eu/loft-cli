@@ -172,6 +172,16 @@ def provider_ssh_conf_d_base(provider: str, config: LocalPathsConfig | None = No
     return base
 
 
+def ssh_key_dir(provider: str, host_name: str, config: LocalPathsConfig | None = None) -> Path:
+    """Return the SSH key directory for a given provider and host.
+
+    Keys are stored under:
+        {keys_base}/{provider}/{host_name}/  (e.g. ~/.loft-cli/keys/hetzner/my-server/)
+    """
+    base = (config or _config).keys_base
+    return base / provider / host_name
+
+
 def provider_wg_state_base(provider: str, config: LocalPathsConfig | None = None) -> Path:
     """Return the WireGuard state base directory namespaced under a provider.
 

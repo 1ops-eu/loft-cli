@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class MetaBlock(BaseModel):
@@ -104,6 +104,14 @@ class AllowPortRule(BaseModel):
 
 class FirewallBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("allow_ports", mode="before")
+    @classmethod
+    def _coerce_allow_ports(cls, v: object) -> object:
+        """Accept bare port integers as shorthand for {port: N, proto: tcp}."""
+        if not isinstance(v, list):
+            return v
+        return [{"port": item} if isinstance(item, int) else item for item in v]
 
     provider: str = Field(
         default="ufw",

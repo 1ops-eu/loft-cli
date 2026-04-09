@@ -15,7 +15,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 from typer.testing import CliRunner
 
 from loft_cli.cli import app
@@ -83,14 +82,14 @@ class TestFleetDoctorAllClean:
         ]
 
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch("loft_cli.cli._run_doctor_on_spec", return_value=_clean_result())
 
-        result = runner.invoke(app, [
-            "doctor", "--fleet", str(fleet_dir), "--selector", "env=staging"
-        ])
+        result = runner.invoke(
+            app, ["doctor", "--fleet", str(fleet_dir), "--selector", "env=staging"]
+        )
 
         assert result.exit_code == 0
 
@@ -105,14 +104,14 @@ class TestFleetDoctorAllClean:
         fake_matches = [(str(spec_a), MagicMock())]
 
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch("loft_cli.cli._run_doctor_on_spec", return_value=_clean_result())
 
-        result = runner.invoke(app, [
-            "doctor", "--fleet", str(fleet_dir), "--selector", "env=staging"
-        ])
+        result = runner.invoke(
+            app, ["doctor", "--fleet", str(fleet_dir), "--selector", "env=staging"]
+        )
 
         assert result.exit_code == 0
         assert "clean" in result.output
@@ -137,17 +136,15 @@ class TestFleetDoctorDrift:
         fake_matches = [(str(spec_a), MagicMock())]
 
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch(
             "loft_cli.cli._run_doctor_on_spec",
             return_value=_drift_result(["nginx.service", "ufw"]),
         )
 
-        result = runner.invoke(app, [
-            "doctor", "--fleet", str(fleet_dir), "--selector", "env=prod"
-        ])
+        result = runner.invoke(app, ["doctor", "--fleet", str(fleet_dir), "--selector", "env=prod"])
 
         assert result.exit_code != 0
 
@@ -162,17 +159,15 @@ class TestFleetDoctorDrift:
         fake_matches = [(str(spec_a), MagicMock())]
 
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch(
             "loft_cli.cli._run_doctor_on_spec",
             return_value=_drift_result(["nginx.service", "ufw"]),
         )
 
-        result = runner.invoke(app, [
-            "doctor", "--fleet", str(fleet_dir), "--selector", "env=prod"
-        ])
+        result = runner.invoke(app, ["doctor", "--fleet", str(fleet_dir), "--selector", "env=prod"])
 
         # Drifted resource names should appear in the output
         assert "nginx.service" in result.output or "drift" in result.output
@@ -201,14 +196,12 @@ class TestFleetDoctorDrift:
             return _drift_result(["some-resource"])
 
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch("loft_cli.cli._run_doctor_on_spec", side_effect=_alternating_result)
 
-        result = runner.invoke(app, [
-            "doctor", "--fleet", str(fleet_dir), "--selector", "env=prod"
-        ])
+        result = runner.invoke(app, ["doctor", "--fleet", str(fleet_dir), "--selector", "env=prod"])
 
         # Summary counts should reflect the results
         assert "1 clean" in result.output
@@ -251,14 +244,21 @@ class TestFleetDoctorContinueOnError:
             "loft_cli.cli._run_doctor_on_spec", side_effect=_first_error_second_clean
         )
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
 
-        result = runner.invoke(app, [
-            "doctor", "--fleet", str(fleet_dir), "--selector", "env=staging",
-            "--continue-on-error"
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "doctor",
+                "--fleet",
+                str(fleet_dir),
+                "--selector",
+                "env=staging",
+                "--continue-on-error",
+            ],
+        )
 
         # Both specs should have been checked
         assert doctor_mock.call_count == 2
@@ -276,18 +276,25 @@ class TestFleetDoctorContinueOnError:
         fake_matches = [(str(spec_a), MagicMock())]
 
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch(
             "loft_cli.cli._run_doctor_on_spec",
             return_value=_error_result("Connection refused"),
         )
 
-        result = runner.invoke(app, [
-            "doctor", "--fleet", str(fleet_dir), "--selector", "env=staging",
-            "--continue-on-error"
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "doctor",
+                "--fleet",
+                str(fleet_dir),
+                "--selector",
+                "env=staging",
+                "--continue-on-error",
+            ],
+        )
 
         # Error should be mentioned in the output
         assert "error" in result.output.lower() or "Connection refused" in result.output
@@ -313,18 +320,23 @@ class TestFleetDoctorContinueOnError:
             call_count["n"] += 1
             return _error_result("SSH timeout")
 
-        doctor_mock = mocker.patch(
-            "loft_cli.cli._run_doctor_on_spec", side_effect=_first_error
-        )
+        doctor_mock = mocker.patch("loft_cli.cli._run_doctor_on_spec", side_effect=_first_error)
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
 
-        result = runner.invoke(app, [
-            "doctor", "--fleet", str(fleet_dir), "--selector", "env=staging"
-            # No --continue-on-error
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "doctor",
+                "--fleet",
+                str(fleet_dir),
+                "--selector",
+                "env=staging",
+                # No --continue-on-error
+            ],
+        )
 
         # Should have stopped after the first error
         assert doctor_mock.call_count == 1
@@ -346,18 +358,25 @@ class TestFleetDoctorContinueOnError:
         ]
 
         mocker.patch("loft_cli.local.selector.select_specs", return_value=fake_matches)
-        mocker.patch("loft_cli.cli._build_pipeline", return_value=(
-            MagicMock(), MagicMock(), MagicMock(), []
-        ))
+        mocker.patch(
+            "loft_cli.cli._build_pipeline", return_value=(MagicMock(), MagicMock(), MagicMock(), [])
+        )
         mocker.patch(
             "loft_cli.cli._run_doctor_on_spec",
             return_value=_error_result("Network unreachable"),
         )
 
-        result = runner.invoke(app, [
-            "doctor", "--fleet", str(fleet_dir), "--selector", "env=staging",
-            "--continue-on-error"
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "doctor",
+                "--fleet",
+                str(fleet_dir),
+                "--selector",
+                "env=staging",
+                "--continue-on-error",
+            ],
+        )
 
         # Both errored — summary mentions "errored"
         assert "errored" in result.output or "error" in result.output.lower()

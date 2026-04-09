@@ -25,8 +25,10 @@ from loft_cli_core.specs.loader import load_spec
 def _make_wg_plan(tmp_path: Path, registered_peers_only: bool = True):
     """Create a plan from a WireGuard-enabled bootstrap spec.
 
-    By default uses registered_peers_only=true so the tunnel gate is present.
-    Pass registered_peers_only=False to test the no-gate path.
+    The tunnel gate and delete_open_ssh_rule steps are emitted whenever
+    wireguard.enabled=true, regardless of registered_peers_only.
+    registered_peers_only only controls whether the SSH rule is restricted
+    to a specific peer IP vs the whole WireGuard interface.
     """
     spec_yaml = textwrap.dedent(f"""\
         kind: bootstrap
@@ -124,7 +126,7 @@ def _make_nowg_plan(tmp_path: Path):
 class TestWireGuardTunnelGate:
     """Tests for the verify_ssh_over_wireguard_tunnel gate step.
 
-    The gate is only emitted when registered_peers_only=true.
+    The gate is emitted whenever wireguard.enabled=true.
     """
 
     def test_gate_present_when_registered_peers_only(self, tmp_path):
@@ -133,19 +135,32 @@ class TestWireGuardTunnelGate:
         gate_steps = [s for s in p.steps if s.id == "verify_ssh_over_wireguard_tunnel"]
         assert len(gate_steps) == 1, "Should have exactly one tunnel gate step"
 
-    def test_gate_absent_when_not_registered_peers_only(self, tmp_path):
-        """Gate step must NOT be present when registered_peers_only=false."""
+    def test_gate_present_when_not_registered_peers_only(self, tmp_path):
+        """Gate step must still be present when registered_peers_only=false.
+
+        The safety gate applies whenever WireGuard is enabled — registered_peers_only
+        only controls whether the SSH rule is restricted to a specific peer IP.
+        """
         p = _make_wg_plan(tmp_path, registered_peers_only=False)
         gate_steps = [s for s in p.steps if s.id == "verify_ssh_over_wireguard_tunnel"]
-        assert len(gate_steps) == 0, "Should have no tunnel gate when registered_peers_only=false"
+        assert len(gate_steps) == 1, "Should have tunnel gate whenever wireguard is enabled"
 
-    def test_delete_open_ssh_rule_absent_when_not_registered_peers_only(self, tmp_path):
-        """delete_open_ssh_rule must NOT be present when registered_peers_only=false."""
+    def test_delete_open_ssh_rule_present_when_not_registered_peers_only(self, tmp_path):
+        """delete_open_ssh_rule must be present when registered_peers_only=false.
+
+        The delete step is always emitted when WireGuard is enabled and depends_on
+        the tunnel gate so it is skipped if the gate fails.
+        """
         p = _make_wg_plan(tmp_path, registered_peers_only=False)
         delete_steps = [s for s in p.steps if s.id == "delete_open_ssh_rule"]
         assert (
-            len(delete_steps) == 0
-        ), "Should have no delete_open_ssh_rule when registered_peers_only=false"
+            len(delete_steps) == 1
+        ), "Should have delete_open_ssh_rule whenever wireguard is enabled"
+        # Verify the depends_on chain is intact
+        gate_idx = next(
+            i for i, s in enumerate(p.steps) if s.id == "verify_ssh_over_wireguard_tunnel"
+        )
+        assert gate_idx in delete_steps[0].depends_on
 
     def test_allow_ssh_on_wireguard_present_when_wg_enabled(self, tmp_path):
         """allow_ssh_on_wireguard must always be present when WG is enabled."""

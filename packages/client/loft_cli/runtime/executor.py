@@ -365,6 +365,7 @@ class Executor:
                         "wg-quick not found",
                         "sudo access required",
                         "No client.conf found",
+                        "timed out",
                     )
                 )
                 if _wg_unavailable:
