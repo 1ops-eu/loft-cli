@@ -1,0 +1,34 @@
+kind: bootstrap
+
+meta:
+  name: worker-node-1
+  description: Worker node 1 for staging fleet
+  labels:
+    role: worker
+    env: staging
+
+host:
+  name: worker-node-1
+  address: 203.0.113.11
+  os_family: debian
+
+login:
+  user: root
+  private_key: ~/.ssh/id_ed25519
+  port: 22
+
+admin_user:
+  name: deploy
+  groups:
+    - sudo
+  pubkeys:
+    - ~/.ssh/id_ed25519.pub
+
+ssh:
+  port: 2222
+  disable_root_login: true
+  disable_password_auth: true
+
+firewall:
+  provider: ufw
+  ssh_only: true

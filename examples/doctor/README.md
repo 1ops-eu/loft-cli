@@ -25,6 +25,47 @@ loft-cli doctor examples/stack/stack.yaml
 loft-cli reconcile examples/stack/stack.yaml
 ```
 
+## Fleet Mode
+
+Run doctor against multiple hosts at once using a directory of spec files:
+
+```bash
+# Run doctor against all specs in a fleet directory
+loft-cli doctor --fleet ./fleet/
+
+# Filter by glob pattern (e.g. only prod hosts)
+loft-cli doctor --fleet ./fleet/ --selector "prod-*.yaml"
+
+# Continue even if a host errors (don't abort on first failure)
+loft-cli doctor --fleet ./fleet/ --continue-on-error
+```
+
+Fleet mode prints a Rich summary table after running all hosts:
+
+```
+Fleet Doctor Summary
+┌──────────────┬─────────────────┬─────────┬───────────────────┬───────┐
+│ Spec         │ Host            │ Status  │ Drifted Resources │ Error │
+├──────────────┼─────────────────┼─────────┼───────────────────┼───────┤
+│ web-prod     │ 203.0.113.10    │  clean  │                   │       │
+│ db-prod      │ 203.0.113.11    │ drifted │ postgres.conf     │       │
+│ cache-prod   │ 203.0.113.12    │  error  │                   │ ...   │
+└──────────────┴─────────────────┴─────────┴───────────────────┴───────┘
+```
+
+Exit code is `0` if all hosts are clean, `1` if any host drifted or errored.
+
+## Fleet Directory Layout
+
+```
+fleet/
+  web-prod.yaml
+  db-prod.yaml
+  cache-prod.yaml
+```
+
+Each file is an independent loft-cli spec (any kind: bootstrap, service, stack, etc.).
+
 ## How it works
 
 ### Agent side
@@ -60,3 +101,4 @@ doctor/
 ```
 
 No spec file is needed here — `doctor` and `reconcile` work with any existing spec (bootstrap, service, stack, etc.).
+

@@ -272,10 +272,10 @@ class Executor:
                     home = expand_result.stdout.strip()
                     target = home + target[1:]  # replace leading ~ with $HOME
 
-            # For goss files: ensure the parent directory exists first
-            if "/.goss/" in target:
-                parent = target.rsplit("/", 1)[0]
-                self._session.run(f"mkdir -p {parent}", sudo=False, warn=True)
+            # Ensure the parent directory exists on the remote before upload.
+            # Run mkdir using the already-expanded target so ~ is resolved.
+            parent_dir = target.rsplit("/", 1)[0] if "/" in target else "."
+            self._session.run(f"mkdir -p {parent_dir}", sudo=False, warn=True)
 
             upload_result = self._session.upload_content(step.file_content, target, sudo=step.sudo)
             if not upload_result.ok:

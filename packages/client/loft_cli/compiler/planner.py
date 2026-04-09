@@ -624,6 +624,17 @@ def _plan_bootstrap(spec: BootstrapSpec, ctx: NormalizedContext) -> list[Step]:
         goss_content = None
 
     if goss_content is not None:
+        steps.append(
+            _s(
+                "ensure_goss_dir",
+                "Ensure ~/.goss/ directory exists on remote",
+                R,
+                StepKind.SSH_COMMAND,
+                command=f"mkdir -p /home/{spec.admin_user.name}/.goss && chown {spec.admin_user.name}:{spec.admin_user.name} /home/{spec.admin_user.name}/.goss",
+                sudo=False,
+                tags=["goss"],
+            )
+        )
         idx_ship = len(steps)
         steps.append(
             _s(

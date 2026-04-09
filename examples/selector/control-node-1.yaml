@@ -1,0 +1,34 @@
+kind: bootstrap
+
+meta:
+  name: control-node-1
+  description: Control plane node for staging fleet
+  labels:
+    role: control
+    env: staging
+
+host:
+  name: control-node-1
+  address: 203.0.113.10
+  os_family: debian
+
+login:
+  user: root
+  private_key: ~/.ssh/id_ed25519
+  port: 22
+
+admin_user:
+  name: deploy
+  groups:
+    - sudo
+  pubkeys:
+    - ~/.ssh/id_ed25519.pub
+
+ssh:
+  port: 2222
+  disable_root_login: true
+  disable_password_auth: true
+
+firewall:
+  provider: ufw
+  ssh_only: true
