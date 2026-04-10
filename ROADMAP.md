@@ -743,6 +743,112 @@ Next steps:
 
 ---
 
+## v1.1 -- Official Service Catalog Expansions
+
+**Goal:** Ship first-class support for Langfuse and Temporal as self-hosted Docker services, deployable from a single loft-cli spec with no manual steps after apply.
+
+Both services are multi-container workloads. They are delivered as `kind: compose_project` specs with supporting `kind: postgres_ensure` and `kind: http_check` resources, plus official example specs under `examples/`.
+
+### Langfuse
+
+[Langfuse](https://langfuse.com) is an open-source LLM observability and analytics platform. The self-hosted deployment requires PostgreSQL and a Compose stack (web + worker + clickhouse).
+
+| Item | Description |
+|---|---|
+| `examples/langfuse/` | Official example spec — bootstrap → postgres_ensure → compose_project → http_check |
+| `kind: postgres_ensure` integration | Declares the `langfuse` database, user, and required extensions before stack deploy |
+| Compose project spec | Langfuse `docker-compose.yml` managed as a `kind: compose_project` resource |
+| `kind: http_check` gate | Polls `http://localhost:3000/api/health` after deploy; stack is not marked healthy until the check passes |
+| `LANGFUSE_SECRET_KEY` / `NEXTAUTH_SECRET` | Secrets generated on first apply by the agent; stored in `/var/lib/loft-cli/secrets/langfuse/` |
+| `post_deploy` migration step | Runs database migrations via `container_exec` on first deploy and on version upgrades |
+
+### Temporal
+
+[Temporal](https://temporal.io) is an open-source durable workflow orchestration platform. The self-hosted deployment requires PostgreSQL (or Cassandra) and a Compose stack (server + web UI + admin tools).
+
+| Item | Description |
+|---|---|
+| `examples/temporal/` | Official example spec — bootstrap → postgres_ensure → compose_project → http_check |
+| `kind: postgres_ensure` integration | Declares the `temporal` and `temporal_visibility` databases, user, and extensions before stack deploy |
+| Compose project spec | Temporal `docker-compose.yml` managed as a `kind: compose_project` resource |
+| `kind: http_check` gate | Polls `http://localhost:8233` (Web UI) after deploy; confirms frontend is serving |
+| Schema setup step | Runs `temporal-sql-tool` schema initialization via `container_exec` on first deploy |
+| Namespace bootstrap | Creates the default namespace via `tctl` in a `post_deploy` `container_exec` step |
+
+### Shared Patterns
+
+Both examples establish the canonical pattern for complex self-hosted services in loft-cli:
+
+```
+kind: postgres_ensure   ← database + user + extensions
+kind: file_template     ← .env file with secrets
+kind: compose_project   ← stack deploy (pull → up → health check)
+kind: http_check        ← application-level readiness gate
+```
+
+These examples double as acceptance tests for the `post_deploy` and `kind: http_check` features shipped in v0.7.
+
+**Acceptance criteria:**
+- `loft-cli apply examples/langfuse/langfuse.yaml` deploys a running Langfuse instance with no manual steps
+- `loft-cli apply examples/temporal/temporal.yaml` deploys a running Temporal cluster with no manual steps
+- Both examples pass `loft-cli doctor` after apply (no drift)
+- Re-applying is idempotent — second apply produces no changes
+- Secrets are generated on first apply, persisted on the agent, and not re-generated on re-apply
+- Both examples are covered by smoke tests (`make smoke`)
+
+### Developer Ergonomics
+
+A second focus of v1.1 is improving the day-to-day experience of working with loft-cli project directories — specifically around env file management and inventory access.
+
+#### .env Auto-Discovery
+
+Currently, env files must be passed explicitly via `--env-file` on every invocation. v1.1 formalizes automatic discovery so that `loft-cli apply servers/prod-1/bootstrap.yaml` works without spelling out `--env-file` every time.
+
+**Discovery chain (lowest priority to highest):**
+
+1. `~/.loft-cli/.env` — global fallback (user-level defaults, e.g. `ORG_SSH_KEY_PATH`)
+2. Walk up from the spec file's directory to the project root, loading any `.env` found along the way
+3. Sibling `.env` in the spec file's directory (per-server overrides)
+4. Explicit `--env-file` flags passed on the command line (always win)
+
+**Project root marker:** A `loft-cli.yaml` file or `.loft-cli/` directory in a parent folder marks the project root and stops upward discovery.
+
+**Explicit `--env-file` remains additive:** Files passed via `--env-file` are loaded on top of auto-discovered ones. Discovery can be disabled with `--no-auto-env`.
+
+| Item | Description |
+|---|---|
+| `~/.loft-cli/.env` global fallback | Lowest-priority env file loaded for every invocation; user stores common global values here (`ORG_SSH_KEY_PATH`, `DEFAULT_ADMIN_USER`, etc.) |
+| Sibling `.env` auto-load | If a `.env` file exists next to the spec file, it is loaded automatically |
+| Upward walk to project root | Discovers `.env` files in parent directories up to the project root marker |
+| `--no-auto-env` flag | Disables auto-discovery entirely; explicit `--env-file` is still honoured |
+| Project root marker | `loft-cli.yaml` or `.loft-cli/` directory stops upward discovery |
+
+#### `loft-cli inventory export`
+
+Export the inventory database to JSON or CSV for external use (dashboards, scripts, audits):
+
+```bash
+loft-cli inventory export --format json > inventory.json
+loft-cli inventory export --format csv  > inventory.csv
+```
+
+Exports the current state of all servers and their services from `inventory.db`. The JSON format is machine-readable and consumable by external tools (1ops platform, custom scripts, CI/CD pipelines).
+
+| Item | Description |
+|---|---|
+| `loft-cli inventory export --format json` | Exports `vv_server` + `vv_server_service` as a JSON array |
+| `loft-cli inventory export --format csv` | Exports the same data as two CSV files (`servers.csv`, `services.csv`) |
+| `--output PATH` flag | Write to file instead of stdout |
+
+**Acceptance criteria (Developer Ergonomics):**
+- `loft-cli apply servers/prod-1/bootstrap.yaml` automatically loads `servers/prod-1/.env` (and any ancestor `.env` up to the project root) without `--env-file`
+- `~/.loft-cli/.env` is loaded as the global fallback for every invocation
+- `--no-auto-env` disables auto-discovery and restores fully-explicit behaviour
+- `loft-cli inventory export --format json` produces valid JSON consumable by external tools
+- Existing `--env-file` usage is fully backward-compatible
+
+---
+
 ## RFC Series
 
 | RFC | Title | Status | Target |

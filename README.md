@@ -1,6 +1,8 @@
 # loft-cli
 
-> **A CLI that safely bootstraps fresh Linux servers into production-ready self-hosted nodes — generating human-readable ops documentation, managing local SSH config, and maintaining a local inventory — all from a single typed YAML spec.**
+> **A self-hosted infrastructure compiler — turns a typed YAML spec into a reviewable plan, deterministic execution, and human-readable ops docs for fresh Linux servers.**
+
+loft-cli is **Layer 1**. It makes VMs ready and usable: bootstrap, harden, install services, deploy containers, manage configuration, detect drift, and verify state — all from a single typed YAML spec.
 
 ---
 
@@ -65,6 +67,8 @@ docker run --rm \
 2. **Plan** — generates a deterministic, reviewable execution plan
 3. **Docs** — renders a human-readable Markdown ops guide from the plan
 4. **Apply** — executes the plan safely, enforcing SSH lockout prevention
+5. **Doctor** — detects drift between desired and actual server state
+6. **Reconcile** — re-applies only the drifted resources
 
 From a single YAML spec, you get:
 - A secure, hardened Linux server (SSH key-only, custom port, ufw, WireGuard)
@@ -111,6 +115,26 @@ loft-cli apply examples/postgres.yaml
 
 ```bash
 loft-cli apply examples/app-container.yaml
+```
+
+### 4. Detect and fix drift
+
+```bash
+# Check whether the server matches the spec
+loft-cli doctor my-server.yaml
+
+# Re-apply only the resources that have drifted
+loft-cli reconcile my-server.yaml
+```
+
+### 5. WireGuard tunnel workflow
+
+```bash
+# After bootstrap with wireguard.enabled: true:
+loft-cli tunnel up my-server      # bring up the tunnel
+ssh my-server                      # SSH routes through the VPN IP automatically
+loft-cli tunnel status             # view all hosts + active/inactive state
+loft-cli tunnel down my-server     # tear down the tunnel
 ```
 
 ---
@@ -168,8 +192,51 @@ All commands that load specs support these options:
 
 | Option | Description |
 |---|---|
-| `--env-file PATH` | Load environment variables from a `.env` file before resolving the spec. Variables in the file only apply when not already set in the environment (existing env vars take precedence). |
+| `--env-file PATH` | Load environment variables from a `.env` file. Repeatable — later files override earlier ones. Environment variables already set take precedence over all `.env` files. |
 | `--passthrough` | Leave unresolved `${VAR}` references unchanged instead of erroring. Useful for generating docs or plans from specs with variables you don't want to resolve yet. |
+
+---
+
+## Project Structure
+
+loft-cli imposes no directory layout, but this pattern works well for teams managing one or more servers:
+
+```
+my-project/
+  servers/
+    prod-1/
+      bootstrap.yaml      ← kind: bootstrap
+      services.yaml       ← kind: service, stack, etc.
+      .env                ← per-server variables (SERVER_IP, SSH_PORT, ...)
+    staging-1/
+      bootstrap.yaml
+      services.yaml
+      .env
+  shared/
+    .env                  ← shared variables (ORG_NAME, SSH_KEY_PATH, ...)
+  templates/
+    nginx-site.conf.j2    ← Jinja2 templates for kind: file_template
+```
+
+**Applying a spec with env files:**
+
+```bash
+# Layer shared variables first, then server-specific overrides on top
+loft-cli apply servers/prod-1/bootstrap.yaml \
+  --env-file shared/.env \
+  --env-file servers/prod-1/.env
+```
+
+`--env-file` is repeatable. Resolution order (highest priority first):
+
+1. Shell environment variables (`export KEY=value`)
+2. Last `--env-file` on the command line
+3. Earlier `--env-file` files
+4. Spec defaults (`${VAR:-default}`)
+
+Each server has its own `.env` for values that differ per host (IP address, SSH port, WireGuard addresses). Shared credentials and org-wide defaults go in a common `.env`.
+
+> **Auto-discovery of `.env` files** (loading the sibling `.env` automatically without spelling out `--env-file`) is planned — see ROADMAP v1.1.
 
 ---
 
@@ -290,41 +357,7 @@ When WireGuard is enabled, an additional **tunnel safety gate** is inserted betw
 
 If goss cannot run for any reason, apply prints a **bold yellow warning** and continues — the server is still configured.
 
-To re-run goss manually or check a specific static reference spec:
-
-```bash
-# On the server
-goss -g ~/.goss/goss.yaml validate
-
-# Via Makefile (copies a static reference spec and runs it)
-make test-goss HOST=203.0.113.10 PORT=2222 USER=admin
-```
-
-Each example in `examples/ubuntu/` ships as a pair — a loft-cli YAML and a matching `.goss.yaml` reference spec side-by-side in the same folder:
-
-```
-examples/ubuntu/
-  04-firewall-ssh2222/
-    04-firewall-ssh2222.yaml        ← loft-cli spec
-    04-firewall-ssh2222.goss.yaml   ← static goss reference
-```
-
-### Local State Management
-
-After a successful bootstrap:
-- `~/.ssh/conf.d/loft-cli/{host_name}.conf` — SSH alias to the new server (uses VPN IP as HostName when WireGuard is enabled)
-- `~/.loft-cli/inventory.db` — local server inventory (SQLite with versionize historization)
-- `~/.loft-cli/runs/` — JSON execution logs
-- `~/.goss/` — goss specs and master gossfile deposited by loft-cli
-- `~/.wg/loft-cli/{host_name}/` — WireGuard key material and configuration (includes `client_interface` name in metadata.json for per-host tunnel naming)
-  - `private.key` — server Curve25519 private key
-  - `public.key` — server public key (derived via PyNaCl)
-  - `wg0.conf` — server wg-quick config as deployed
-  - `client.key` — auto-generated client private key (stable across re-runs)
-  - `client.conf` — client wg-quick config for local use (`wg-quick up client.conf`)
-  - `metadata.json` — interface details, peer config, deployment provenance
-
-All paths are overridable via `LOFT_CLI_STATE_DIR` — see [Configurable State Directory](#configurable-state-directory).
+Each example in `examples/ubuntu/` ships as a pair — a loft-cli YAML and a matching `.goss.yaml` reference spec side-by-side in the same folder.
 
 ---
 
@@ -353,7 +386,7 @@ The pipeline has six phases. Each phase uses the [registry system](#registry-sys
 
 **Entry:** `loft-cli/specs/loader.py` → `load_spec()`
 
-1. If `--env-file` was provided, loads `KEY=VALUE` pairs into the environment (existing env vars take precedence).
+1. If `--env-file` was provided, loads `KEY=VALUE` pairs into the environment (existing env vars take precedence; multiple files are merged in order).
 2. Reads the YAML file with `yaml.safe_load()` into a raw Python dict.
 3. Reads the `kind` field (e.g. `"bootstrap"`) and looks up the matching Pydantic model class from `SPEC_REGISTRY`.
 4. Recursively walks the dict and resolves all `${[prefix:]key[:-default]}` tokens via the resolver registry. In strict mode, an unresolved token is a fatal error with the exact field path. In passthrough mode, it is left as-is.
@@ -420,7 +453,8 @@ The executor iterates over the Plan's steps in order. For each step:
 
 1. **Check dependencies** — if any step in `depends_on` has failed, this step is skipped.
 2. **Check abort** — if a gate has failed, all remaining steps are skipped.
-3. **Dispatch** — looks up `STEP_HANDLER_REGISTRY[step.kind]` and calls the handler.
+3. **Check policy** — if a `policy.yaml` is present on the server, the policy engine evaluates the step before it runs (see [Policy Engine](#policy-engine)).
+4. **Dispatch** — looks up `STEP_HANDLER_REGISTRY[step.kind]` and calls the handler.
 
 Step handlers:
 
@@ -444,7 +478,7 @@ After execution completes, three things happen:
 
 ### Bootstrap Execution Flow
 
-The bootstrap plan is the most complex, with ~25 steps including two safety gates. Here is the dependency and gate structure:
+The bootstrap plan is the most complex, with ~25 steps including three safety gates:
 
 ```mermaid
 flowchart TD
@@ -493,10 +527,9 @@ flowchart TD
 
 **Key safety properties:**
 
-- **Gate 1** (pre-port-change): Verifies that the admin user can log in with key auth before the SSH port is changed. If this fails, nothing dangerous has happened — the server is still on its original port with root access.
-- **Gate 2** (post-port-change): Verifies that the admin user can log in on the new port. `disable_root_login`, `disable_password_auth`, and `finalize_firewall` all carry `depends_on` pointing to this gate — they **never execute** unless the gate passes.
-- **Gate 3** (WireGuard tunnel, if enabled): After `allow_ssh_on_wireguard`, the client brings up the WireGuard tunnel and verifies SSH through the VPN IP. Only if this succeeds is the open SSH rule deleted. If the gate fails, the tunnel is torn down and the server remains accessible via public IP.
-- **WireGuard SSH restriction** is the absolute last remote step. After it runs, only WireGuard-tunneled connections reach SSH. All subsequent steps are local.
+- **Gate 1** (pre-port-change): Verifies that the admin user can log in with key auth before the SSH port is changed.
+- **Gate 2** (post-port-change): Verifies admin login on the new port. `disable_root_login`, `disable_password_auth`, and `finalize_firewall` all carry `depends_on` pointing to this gate — they **never execute** unless the gate passes.
+- **Gate 3** (WireGuard tunnel, if enabled): After `allow_ssh_on_wireguard`, the client brings up the WireGuard tunnel and verifies SSH through the VPN IP. Only if this succeeds is the open SSH rule deleted.
 - **Goss verification** is non-fatal — a failure is reported but does not abort the plan.
 
 ---
@@ -547,17 +580,216 @@ Groups related resources (`file_template`, `compose_project`, etc.) into a singl
 
 See [examples/stack/](examples/stack/)
 
-### Postflight Checks
+### `kind: http_check`
 
-Both spec kinds support a `checks` block for post-apply verification:
+GET-only HTTP readiness probe with retry/backoff. Usable as a standalone check or as a dependency gate inside a `kind: stack`. Returns success only when the endpoint responds with the expected status code.
 
 ```yaml
-checks:
-  - type: ssh
-    port: 2222
-  - type: wireguard
-    interface: wg0
+kind: http_check
+meta:
+  name: app-ready
+host:
+  name: prod-1
+check:
+  url: http://localhost:3000/health
+  expected_status: 200
+  retries: 10
+  retry_delay_seconds: 5
 ```
+
+### `kind: systemd_unit`
+
+Deploys and manages host-native systemd services. Supports optional logrotate configuration for service log files.
+
+```yaml
+kind: systemd_unit
+meta:
+  name: my-worker
+host:
+  name: prod-1
+unit:
+  name: my-worker
+  exec_start: /usr/local/bin/my-worker
+  user: deploy
+  restart: always
+```
+
+### `kind: systemd_timer`
+
+Deploys scheduled execution via systemd timers (oneshot service + `.timer` unit pair).
+
+```yaml
+kind: systemd_timer
+meta:
+  name: nightly-cleanup
+host:
+  name: prod-1
+timer:
+  name: nightly-cleanup
+  on_calendar: "02:00"
+  exec_start: /usr/local/bin/cleanup.sh
+```
+
+### `kind: backup_job`
+
+Defines backup operations with retention and scheduling via a systemd timer. Supports `postgres_dump` and `directory` backup types.
+
+```yaml
+kind: backup_job
+meta:
+  name: db-backup
+host:
+  name: prod-1
+backup:
+  type: postgres_dump
+  database: myapp
+  destination: /var/backups/myapp
+  retention_days: 30
+  schedule: "03:00"
+```
+
+### `kind: postgres_ensure`
+
+Ensures PostgreSQL resources exist on a running instance: users, databases, extensions, and grants. Structured declarations only — no arbitrary SQL.
+
+```yaml
+kind: postgres_ensure
+meta:
+  name: app-db
+host:
+  name: prod-1
+ensure:
+  users:
+    - name: app
+      password_env: APP_DB_PASSWORD
+  databases:
+    - name: myapp
+      owner: app
+  extensions:
+    - database: myapp
+      name: pgcrypto
+```
+
+### Multi-document specs
+
+A single YAML file can contain multiple specs separated by `---`. All documents in the file are processed in order using the same env files:
+
+```yaml
+kind: postgres_ensure
+# ...
+---
+kind: compose_project
+# ...
+```
+
+---
+
+## Drift Detection and Reconciliation
+
+After initial apply, servers can drift from their declared spec — packages updated manually, config files changed, services stopped. `loft-cli doctor` detects this drift and `loft-cli reconcile` corrects it.
+
+```bash
+# Compare the server's current state against the spec
+loft-cli doctor servers/prod-1/services.yaml --env-file servers/prod-1/.env
+
+# Re-apply only the resources that have drifted
+loft-cli reconcile servers/prod-1/services.yaml --env-file servers/prod-1/.env
+```
+
+`doctor` reports per-resource drift status without making any changes. `reconcile` runs the planner over only the drifted resources and applies the delta — resources that match their desired state are skipped.
+
+Use `loft-cli diff` to see what *would* change on the server before committing to a reconcile:
+
+```bash
+loft-cli diff servers/prod-1/services.yaml --env-file servers/prod-1/.env
+```
+
+---
+
+## Policy Engine
+
+The policy engine lets you control which plan steps execute automatically versus which require explicit approval or are denied outright. Policy is **inert by default** — if no `policy.yaml` is present on the server, all steps execute without restriction.
+
+### policy.yaml format
+
+```yaml
+version: "1"
+default_action: auto_apply   # auto_apply | require_approval | deny
+
+rules:
+  - name: deny-root-commands
+    match_id: "run_as_root_*"
+    action: deny
+
+  - name: approve-schema-migrations
+    match_tags: [schema_migration]
+    action: require_approval
+
+  - name: auto-apply-health-checks
+    match_kind: http_check
+    action: auto_apply
+```
+
+Rules are evaluated in order. The first matching rule wins. If no rule matches, `default_action` applies.
+
+### Rule matching
+
+Each rule can match on any combination of (all specified conditions must hold):
+
+| Field | Matches | Example |
+|---|---|---|
+| `match_kind` | Step kind (exact) | `"ssh_command"`, `"http_check"` |
+| `match_id` | Step ID (glob pattern) | `"install_*"`, `"*_migration"` |
+| `match_tags` | Any of the listed tags | `[destructive, schema_migration]` |
+
+### Approval tokens
+
+For `require_approval` steps, generate a time-limited HMAC token:
+
+```bash
+# Generates a token valid for 1 hour (default)
+loft-cli rotate-secret --generate-approval-token --step-id install_schema_v2
+```
+
+Pass the token during apply:
+
+```bash
+loft-cli apply spec.yaml --approval-token <TOKEN>
+```
+
+Tokens are validated locally on the agent — no network round-trip required. They are scoped to a specific server (keyed by server identity) and expire automatically.
+
+---
+
+## WireGuard Tunnel Workflow
+
+When `wireguard.enabled: true` in a bootstrap spec, loft-cli:
+
+1. Generates a server+client WireGuard key pair and stores it locally under `~/.wg/loft-cli/`
+2. Configures the WireGuard interface on the server (`wg0`)
+3. Adds a UFW rule allowing SSH only from the WireGuard peer address
+4. Verifies the tunnel is reachable from your machine (safety gate) before deleting the open SSH rule
+5. Writes your SSH conf.d entry using the **VPN IP** as `HostName` (not the public IP)
+
+After bootstrap, `ssh prod-1` only works through the tunnel:
+
+```bash
+loft-cli tunnel up prod-1       # creates wg-prod-1 interface locally
+ssh prod-1                       # connects via VPN IP — works
+loft-cli tunnel down prod-1     # removes wg-prod-1 interface
+```
+
+### Per-host interface naming
+
+Client-side interfaces use `wg-{hostname}` (e.g. `wg-prod-1`, `wg-staging-1`). Multiple tunnels can be active simultaneously without collision.
+
+### tunnel status
+
+```bash
+loft-cli tunnel status
+```
+
+Lists all known hosts with WireGuard state — shows VPN IPs, endpoints, deployment timestamps, and whether the tunnel is currently active.
 
 ---
 
@@ -581,7 +813,7 @@ postgres:
 
 | Token | Meaning |
 |---|---|
-| `${VAR}` | Bare reference — permanent shorthand for `${env:VAR}`. |
+| `${VAR}` | Bare reference — shorthand for `${env:VAR}`. |
 | `${env:VAR}` | Explicit environment variable lookup. |
 | `${file:/path/to/file}` | Read file contents (trailing newline stripped). `~` is expanded. Returns `None` if the file does not exist. |
 | `${prefix:key}` | Dispatch to any addon-registered resolver (e.g. `sops`, `vault`). |
@@ -591,7 +823,7 @@ postgres:
 
 - **Strict mode** (default): unresolved tokens raise an error with the exact field path (e.g., `Unresolved variable '${DB_PASSWORD}' in field 'postgres.create_role.password_env'`).
 - **Passthrough mode** (`--passthrough`): unresolved references are left as-is.
-- **`.env` file support** (`--env-file .env`): loads variables from a file before resolving, with existing environment variables taking precedence.
+- **`.env` file support** (`--env-file .env`): loads variables from a file before resolving. Repeatable — pass multiple `--env-file` flags to layer files.
 
 ### Addon resolvers
 
@@ -622,16 +854,100 @@ export KEY=value    # export prefix is stripped
 
 ---
 
+## Local State Layout
+
+loft-cli stores all local state in three directories on your machine. None of these directories are on the server — they live on the operator's machine.
+
+```
+~/.loft-cli/
+  ├── inventory.db                    ← SQLite inventory database (see below)
+  ├── keys/
+  │   └── {provider}/
+  │       └── {host}/
+  │           ├── id_ed25519          ← SSH private key (0600, write-once)
+  │           └── id_ed25519.pub      ← SSH public key (0644)
+  └── runs/
+      └── {timestamp}_{spec-name}.json  ← structured JSON run log per apply
+
+~/.ssh/
+  ├── config                          ← one Include line added by loft-cli (never removed)
+  └── conf.d/loft-cli/
+      └── {provider}--{host}.conf     ← SSH alias fragment per server
+
+~/.wg/loft-cli/
+  └── {provider}/
+      └── {host}/
+          ├── private.key             ← server WireGuard private key (0600, write-once)
+          ├── public.key              ← server WireGuard public key (0644)
+          ├── wg0.conf                ← server wg-quick config as deployed to the server
+          ├── client.key              ← client WireGuard private key (0600, write-once)
+          ├── client.conf             ← client wg-quick config (used by tunnel up/down)
+          └── metadata.json           ← interface name, VPN IPs, endpoint, timestamps
+```
+
+**Provider scoping:** All paths use `{provider}/{host}` nesting when `host.provider` is set in the spec (e.g. `hetzner`, `ionos`). This prevents collisions when the same hostname exists on multiple cloud providers. Without a provider, a flat layout is used.
+
+**SSH config fragment example:**
+
+```
+# loft-cli managed: hetzner--prod-1
+# Requires: loft-cli tunnel up prod-1
+Host hetzner--prod-1
+  HostName 10.10.0.1
+  User deploy
+  Port 2222
+  IdentityFile ~/.loft-cli/keys/hetzner/prod-1/id_ed25519
+  IdentitiesOnly yes
+```
+
+When WireGuard is active, `HostName` is the VPN IP, not the public IP. The comment reminds you the tunnel must be up.
+
+**Write-once semantics:** `private.key` and `client.key` are never overwritten. WireGuard peer identity must be stable — regenerating keys would break the tunnel on the server side.
+
+### Goss specs (server-side)
+
+Goss specs are stored on the **server** (not on your machine) at `~/.goss/`. The master gossfile accumulates specs from all bootstrap runs:
+
+```
+~/.goss/goss.yaml              ← master gossfile (accumulates all specs)
+~/.goss/{spec-name}.yaml       ← individual spec per bootstrap run
+```
+
+### inventory.db
+
+`~/.loft-cli/inventory.db` is a SQLite database that records every server loft-cli has managed. It uses the **versionize historization** pattern — records are never deleted; each change appends a new version row with timestamps. The current state is available via `vv_*` views.
+
+**Three tables:**
+
+| Table | What it stores |
+|---|---|
+| `tv_server` | Per-server metadata: name, address, provider, OS family, SSH config (alias, user, port, identity file), WireGuard settings |
+| `tv_server_service` | Deployed services per server: service type, name, status, and a `metadata_json` blob with kind-specific detail (postgres version, nginx sites, compose project names, systemd unit names, backup schedules, etc.) |
+| `tv_run` | Execution history: spec hash, plan hash, kind, status, started/finished timestamps, per-resource metadata |
+
+**Historization:** Every row has `version_valid_from`, `version_valid_to`, `version_changed_by`, and `version_changed_at` columns. A record with `version_valid_to = '9999-12-31'` is current. When a server is decommissioned via `loft-cli remove`, its status is updated to `decommissioned` — it is never deleted from the database.
+
+**CLI access:**
+
+```bash
+loft-cli inventory list                  # list all servers (current state)
+loft-cli inventory show prod-1           # full detail for one server
+```
+
+**Direct SQLite access** (for ad-hoc queries):
+
+```bash
+sqlite3 ~/.loft-cli/inventory.db \
+  "SELECT name, address, bootstrap_status FROM vv_server"
+```
+
+**Encryption:** The database uses Python's built-in `sqlite3`. The agent binary also supports SQLCipher (drop-in replacement) for encrypted at-rest storage — available in commercial variants.
+
+> **Planned:** `loft-cli inventory export --format json` and a global `~/.loft-cli/.env` fallback are on the ROADMAP for v1.1.
+
+---
+
 ## Configurable State Directory
-
-By default, loft-cli stores local state across several directories:
-
-```
-~/.ssh/conf.d/loft-cli/   SSH config fragments
-~/.wg/loft-cli/           WireGuard key material
-~/.loft-cli/inventory.db  Server inventory
-~/.loft-cli/runs/         Apply execution logs
-```
 
 You can consolidate all state under a single directory for isolation (e.g., testing, CI, multi-environment setups):
 
@@ -640,7 +956,7 @@ You can consolidate all state under a single directory for isolation (e.g., test
 ```bash
 export LOFT_CLI_STATE_DIR=/tmp/loft-cli-test
 loft-cli apply my-spec.yaml
-# All state goes to /tmp/loft-cli-test/{ssh/conf.d/, wg/, inventory.db, runs/}
+# All state goes to /tmp/loft-cli-test/{keys/, ssh/conf.d/, wg/, inventory.db, runs/}
 ```
 
 ### Option 2: Spec field
@@ -664,7 +980,7 @@ Absolute paths and `~`-prefixed paths are resolved normally.
 
 ## SSH Key Generation
 
-When applying a bootstrap spec, loft-cli automatically generates missing SSH key pairs. If `admin_user.pubkeys` references a `.pub` file whose corresponding private key doesn't exist, loft-cli generates an ed25519 key pair before proceeding. This is controlled per-kind via the `KindHooks.needs_key_generation` flag.
+When applying a bootstrap spec, loft-cli automatically generates missing SSH key pairs. If `admin_user.pubkeys` references a `.pub` file whose corresponding private key doesn't exist, loft-cli generates an ed25519 key pair before proceeding. Generated keys are stored at `~/.loft-cli/keys/{provider}/{host}/id_ed25519`. This is controlled per-kind via the `KindHooks.needs_key_generation` flag.
 
 ---
 
@@ -710,33 +1026,18 @@ The `goss/` addon is a reference implementation that demonstrates the addon patt
 
 ---
 
-## Local Inventory
-
-loft-cli maintains a local database with a full historization system (versionize triggers) — every change is recorded with timestamps, so you can see the full history of your server inventory.
-
-```bash
-loft-cli inventory list
-loft-cli inventory show prod-node-1
-```
-
----
-
 ## Tested Platforms
 
-loft-cli is continuously tested against real cloud servers. The table below
-shows which examples pass on which OS/provider combinations.
+loft-cli targets **Debian and Ubuntu** on any Linux server (bare metal or cloud VM). The agent binary supports Linux amd64 and arm64. The client binary runs on Linux, macOS (Intel + Apple Silicon).
 
-<!-- Auto-generated from https://gist.github.com/ — do not edit manually -->
+| Target OS | Architecture | Notes |
+|---|---|---|
+| Ubuntu 22.04 LTS | amd64, arm64 | Fully supported |
+| Ubuntu 24.04 LTS | amd64, arm64 | Fully supported; uses socket-activated sshd |
+| Debian 12 | amd64, arm64 | Fully supported |
+| Debian 13 | amd64 | Tested |
 
-| OS | Provider | Status | Last tested |
-|---|---|---|---|
-| Ubuntu 24.04 | Hetzner Cloud | *pending first run* | — |
-| Debian 13 | Hetzner Cloud | *pending first run* | — |
-
-> Full results with per-example detail are published as
-> [`compatibility.json`](https://gist.github.com/) after each E2E run.
-> Community-contributed results welcome — see the `tester` field in the
-> registry format.
+Cloud providers: Hetzner Cloud, IONOS, OVH, generic VPS (any provider that gives root SSH access).
 
 ---
 
@@ -783,11 +1084,11 @@ Releases are triggered by Git tags:
 ```bash
 # Bump version in all three packages' pyproject.toml files, then:
 git add packages/core/pyproject.toml packages/client/pyproject.toml packages/agent/pyproject.toml
-git commit -m "chore(release): bump version to 0.5.0"
+git commit -m "chore(release): bump version to 0.11.0"
 git push origin main
 
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.11.0
+git push origin v0.11.0
 ```
 
 GitHub Actions will automatically:
@@ -804,8 +1105,7 @@ GitHub Actions will automatically:
 
 - Not a general-purpose config management system (not Ansible)
 - Not a Kubernetes orchestrator
-- Not a UI/SaaS product
-- Not an agent framework
+- Not an application-level orchestrator — it does not configure SaaS applications, import workflows, or seed business data (that's Layer 2, handled by the orchestration layer or commercial addons)
 
 **V1 scope:** Single host, Debian/Ubuntu only, PostgreSQL + Nginx + Docker as the built-in service kinds.
 
@@ -813,7 +1113,7 @@ GitHub Actions will automatically:
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md) for the full milestone plan from v0.1 through v1.0, including planned work on stack deployment, Docker Compose runtime, operational primitives, reusable blueprints, and multi-host operations.
+See [ROADMAP.md](ROADMAP.md) for the full milestone plan from v0.1 through v1.0 and beyond, including planned work on Compose hardening, feature catalog, reusable blueprints, multi-host operations, and v1.1 service additions (Langfuse, Temporal) and developer ergonomics (.env auto-discovery, inventory export).
 
 ---
 
