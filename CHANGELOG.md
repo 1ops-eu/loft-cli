@@ -11,6 +11,26 @@ loft-cli uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.0] - 2026-04-10
+
+### Features
+
+- **docs**: MkDocs + Material docs site with full spec reference, CLI reference, concepts, and operations guides
+- **docs**: GitHub Pages publishing workflow on every push to main and version tags
+- **release**: GPG-signed release artifacts — `checksums.txt.asc` published alongside binaries
+- **release**: git-cliff changelog auto-generation on every release tag
+- **ci**: Coverage reporting with `pytest-cov` (60% threshold enforced in CI)
+- **ci**: `make test-cov` target for local coverage reports
+- **agent**: Version compatibility enforcement — client checks agent major version at connect time and exits with a clear error if mismatched
+
+### Documentation
+
+- **CONTRIBUTING.md**: Contributor guide with PR process, commit convention, new-kind checklist, and backwards-compatibility policy
+- **CHANGELOG.md**: Retroactive changelog from v0.1.0 through v1.0.0
+- **loft-cli-releases.pub.asc**: GPG public key committed to repo for release verification
+
+---
+
 ## [0.11.0] - 2026-03-15
 
 ### Features
