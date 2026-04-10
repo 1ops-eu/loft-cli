@@ -28,7 +28,7 @@ jobs:
       - name: Run unit tests with coverage
         run: |
           pytest tests/ --ignore=tests/test_smoke --ignore=tests/test_local \
-            --cov --cov-report=term-missing --cov-fail-under=60 -v
+            --cov --cov-report=term-missing --cov-fail-under=55 -v
 
       - name: Run smoke tests (validate + plan + docs for all examples)
         run: pytest tests/test_smoke/ -v

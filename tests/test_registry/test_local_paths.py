@@ -13,7 +13,8 @@ from loft_cli_core.registry.local_paths import (
 
 @pytest.fixture(autouse=True)
 def restore_defaults():
-    """Always restore default paths after each test."""
+    """Always restore default paths before and after each test."""
+    register_local_paths(LocalPathsConfig())
     yield
     register_local_paths(LocalPathsConfig())
 
