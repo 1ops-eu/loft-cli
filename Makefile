@@ -31,12 +31,12 @@ help:
 	@echo "    make lint            Run ruff + black --check"
 	@echo "    make fmt             Auto-format with black"
 	@echo ""
-	@echo "  Docs site
-    make docs-serve          Start local MkDocs preview at http://127.0.0.1:8000
-    make docs-build          Build static site to site/
-    make changelog           Generate CHANGELOG.md from git history (requires git-cliff)
-
-  Smoke tests (no remote host needed)"
+	@echo "  Docs site"
+	@echo "    make docs-serve          Start local MkDocs preview at http://127.0.0.1:8000"
+	@echo "    make docs-build          Build static site to site/"
+	@echo "    make changelog           Generate CHANGELOG.md from git history (requires git-cliff)"
+	@echo ""
+	@echo "  Smoke tests (no remote host needed)"
 	@echo "    make validate-example   Validate all example specs"
 	@echo "    make plan-example       Plan all example specs"
 	@echo "    make docs-example       Generate docs for all example specs"
