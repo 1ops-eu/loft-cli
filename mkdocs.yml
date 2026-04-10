@@ -1,0 +1,96 @@
+site_name: loft-cli
+site_description: A self-hosted infrastructure compiler — turns a typed YAML spec into a reviewable plan and deterministic execution.
+site_url: https://1ops-eu.github.io/loft-cli
+repo_url: https://github.com/1ops-eu/loft-cli
+repo_name: 1ops-eu/loft-cli
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - include-markdown
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/1ops-eu/loft-cli
+    - icon: fontawesome/solid/globe
+      link: https://1ops.eu
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Concepts: concepts.md
+  - Spec Reference:
+      - Overview: spec-reference/index.md
+      - "kind: bootstrap": spec-reference/bootstrap.md
+      - "kind: service": spec-reference/service.md
+      - "kind: file_template": spec-reference/file-template.md
+      - "kind: compose_project": spec-reference/compose-project.md
+      - "kind: stack": spec-reference/stack.md
+      - "kind: http_check": spec-reference/http-check.md
+      - "kind: systemd_unit": spec-reference/systemd-unit.md
+      - "kind: systemd_timer": spec-reference/systemd-timer.md
+      - "kind: backup_job": spec-reference/backup-job.md
+      - "kind: postgres_ensure": spec-reference/postgres-ensure.md
+  - CLI Reference: cli-reference.md
+  - Operations:
+      - WireGuard Tunnel: operations/wireguard.md
+      - Drift & Reconcile: operations/drift-reconcile.md
+      - Secret Rotation: operations/secret-rotation.md
+      - Fleet Operations: operations/fleet.md
+  - Contributing: contributing.md
+  - Changelog: changelog.md

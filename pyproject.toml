@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loft-cli-workspace"
-version = "0.11.0"
+version = "1.0.0"
 description = "Workspace root for loft-cli monorepo"
 requires-python = ">=3.11"
 
@@ -26,12 +26,24 @@ dev = [
     "black>=24.0",
     "build>=1.0",
     "pyinstaller>=6.0",
+    "mkdocs-material>=9.5",
+    "mkdocs-include-markdown-plugin>=6.0",
+    "pytest-cov>=5.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["loft_cli_core", "loft_cli", "loft_cli_agent"]
+omit = ["*/tests/*", "*/test_*", "scripts/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 60
 
 [tool.ruff]
 target-version = "py311"

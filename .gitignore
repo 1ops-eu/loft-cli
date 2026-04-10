@@ -12,6 +12,7 @@ build/
 develop-eggs/
 dist/
 release/
+site/
 downloads/
 eggs/
 .eggs/

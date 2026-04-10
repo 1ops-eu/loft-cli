@@ -114,15 +114,46 @@ jobs:
           sha256sum * > checksums.txt
           cat checksums.txt
 
+      - name: Import GPG key
+        run: echo "${{ secrets.RELEASE_GPG_KEY }}" | gpg --batch --import
+
+      - name: Sign checksums
+        run: gpg --batch --yes --detach-sign --armor flat/checksums.txt
+
       - name: Upload checksums artifact
         uses: actions/upload-artifact@v4
         with:
           name: checksums
-          path: flat/checksums.txt
+          path: |
+            flat/checksums.txt
+            flat/checksums.txt.asc
+
+  # ── Generate changelog ─────────────────────────────────────────────────────
+  changelog:
+    needs: [build-client, build-agent]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install git-cliff
+        uses: kenji-miyake/setup-git-cliff@v2
+
+      - name: Generate changelog for this release
+        run: git-cliff --tag ${{ github.ref_name }} --output CHANGELOG.md
+
+      - name: Upload changelog artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: CHANGELOG.md
 
   # ── Publish GitHub Release ──────────────────────────────────────────────────
   publish:
-    needs: [build-client, build-agent, checksums]
+    needs: [build-client, build-agent, checksums, changelog]
     runs-on: ubuntu-latest
 
     steps:
@@ -141,4 +172,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: final/*
-          generate_release_notes: true
+          body_path: final/CHANGELOG.md

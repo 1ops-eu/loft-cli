@@ -544,6 +544,15 @@ def doctor(
                 transport.close()
                 raise typer.Exit(1)
 
+        from loft_cli import __version__
+        from loft_cli.agent_installer import check_version_compatibility
+
+        compatible, compat_msg = check_version_compatibility(__version__, agent_version)
+        if not compatible:
+            console.print(f"[bold red]Version mismatch:[/bold red] {compat_msg}")
+            transport.close()
+            raise typer.Exit(1)
+
         # Upload the current plan as the desired state
         from loft_cli_core.agent_paths import AGENT_BINARY_PATH, AGENT_DESIRED_DIR
 
@@ -1058,6 +1067,14 @@ def _apply_single(parsed_spec, ctx, p, mode, dry_run, console) -> None:
 
             agent_version = detect_agent(transport)
             if agent_version:
+                from loft_cli import __version__
+                from loft_cli.agent_installer import check_version_compatibility
+
+                compatible, compat_msg = check_version_compatibility(__version__, agent_version)
+                if not compatible:
+                    console.print(f"[bold red]Version mismatch:[/bold red] {compat_msg}")
+                    transport.close()
+                    raise typer.Exit(1)
                 console.print(
                     f"[dim]Agent detected (v{agent_version}) — using agent execution[/dim]"
                 )

@@ -1,5 +1,6 @@
-.PHONY: help venv install dev test test-local test-all lint fmt \
+.PHONY: help venv install dev test test-cov test-local test-all lint fmt \
         validate-example plan-example docs-example smoke \
+        docs-serve docs-build changelog \
         build-binary build-agent-binary build-docker test-goss clean
 
 VENV      := .venv
@@ -22,6 +23,7 @@ help:
 	@echo ""
 	@echo "  Testing"
 	@echo "    make test            Run unit/integration tests (no live host needed)"
+	@echo "    make test-cov        Run unit/integration tests with coverage report"
 	@echo "    make test-local      Run tests requiring sqlcipher3 locally"
 	@echo "    make test-all        Run all tests"
 	@echo ""
@@ -29,7 +31,12 @@ help:
 	@echo "    make lint            Run ruff + black --check"
 	@echo "    make fmt             Auto-format with black"
 	@echo ""
-	@echo "  Smoke tests (no remote host needed)"
+	@echo "  Docs site
+    make docs-serve          Start local MkDocs preview at http://127.0.0.1:8000
+    make docs-build          Build static site to site/
+    make changelog           Generate CHANGELOG.md from git history (requires git-cliff)
+
+  Smoke tests (no remote host needed)"
 	@echo "    make validate-example   Validate all example specs"
 	@echo "    make plan-example       Plan all example specs"
 	@echo "    make docs-example       Generate docs for all example specs"
@@ -75,6 +82,10 @@ dev: venv
 
 test:
 	pytest tests/test_specs/ tests/test_compiler/ tests/test_plan/ tests/test_runtime/ tests/test_cli/ tests/test_agent/ -v
+
+test-cov:
+	pytest tests/test_specs/ tests/test_compiler/ tests/test_plan/ tests/test_runtime/ tests/test_cli/ tests/test_agent/ \
+	  --cov --cov-report=term-missing --cov-report=html:htmlcov -v
 
 test-local:
 	pytest tests/test_local/ -v
@@ -134,6 +145,17 @@ docs-example:
 
 smoke: validate-example plan-example docs-example
 	@echo "All smoke tests passed."
+
+# ── Docs site ─────────────────────────────────────────────────────────────────
+
+docs-serve:
+	mkdocs serve
+
+docs-build:
+	mkdocs build --strict
+
+changelog:
+	git-cliff --output CHANGELOG.md
 
 # ── Distribution ──────────────────────────────────────────────────────────────
 

@@ -34,6 +34,27 @@ def detect_agent(transport: Transport) -> str | None:
     return None
 
 
+def check_version_compatibility(client_version: str, agent_version: str) -> tuple[bool, str]:
+    """Check that client and agent major versions match.
+
+    Returns (compatible: bool, message: str). A mismatch is an error from v1.0
+    onwards — major versions must match for the plan format and API to be stable.
+    """
+    try:
+        client_major = int(client_version.split(".")[0])
+        agent_major = int(agent_version.split(".")[0])
+    except (ValueError, IndexError):
+        return True, ""  # Cannot parse — allow and let the apply fail naturally
+
+    if client_major != agent_major:
+        return False, (
+            f"Client v{client_version} requires agent v{client_major}.x, "
+            f"but agent v{agent_version} is installed. "
+            f"Run: loft-cli agent-update <host>"
+        )
+    return True, ""
+
+
 def install_agent_commands() -> list[str]:
     """Return the shell commands to create agent directories on the target.
 
