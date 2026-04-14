@@ -54,6 +54,7 @@ class StepTemplate(BaseModel):
     id: str
     description: str
     condition: dict | None = None  # evaluated by Condition DSL (see conditions.py)
+    code_block: str | None = None  # shell command template with <placeholders>
 
 
 class CatalogEntry(BaseModel):

@@ -1687,6 +1687,12 @@ def catalog_list() -> None:
 @catalog_app.command("show")
 def catalog_show(
     kind: str = typer.Argument(..., help="Spec kind to show details for (e.g. 'bootstrap')"),
+    show_code: bool = typer.Option(
+        False,
+        "--code",
+        "-c",
+        help="Also show the shell command template for each step",
+    ),
 ) -> None:
     """Show detailed field information for a single spec kind."""
     from loft_cli_core.registry.catalog import get_catalog_entry
@@ -1713,6 +1719,19 @@ def catalog_show(
     else:
         console.print("\n[dim]No field metadata available.[/dim]")
 
+    if entry.step_templates:
+        console.print("\n[bold]Steps:[/bold]")
+        for step in entry.step_templates:
+            console.print(f"  [yellow]{step.id}[/yellow]  {step.description}")
+            if step.condition:
+                console.print(f"    [dim]condition: {step.condition}[/dim]")
+            if show_code and step.code_block:
+                for line in step.code_block.splitlines() or [""]:
+                    console.print(f"    [dim]│[/dim] [white]{line}[/white]")
+                console.print()
+        if not show_code:
+            console.print("  [dim](pass --code to show shell command templates)[/dim]")
+
     if entry.outputs:
         console.print("\n[bold]Outputs:[/bold]")
         for output in entry.outputs:
@@ -1737,6 +1756,15 @@ def catalog_export() -> None:
                 "kind": entry.kind,
                 "description": entry.description,
                 "fields": entry.fields,
+                "step_templates": [
+                    {
+                        "id": s.id,
+                        "description": s.description,
+                        "condition": s.condition,
+                        "code_block": s.code_block,
+                    }
+                    for s in entry.step_templates
+                ],
                 "outputs": [
                     {
                         "name": o.name,

@@ -365,6 +365,7 @@ def _register_catalog_entries() -> None:
     from loft_cli_core.registry.catalog import (
         CatalogEntry,
         OutputTemplate,
+        StepTemplate,
         register_catalog_entry,
     )
     from loft_cli_core.specs.backup_job_schema import BackupJobSpec
@@ -389,6 +390,118 @@ def _register_catalog_entries() -> None:
                 "admin user setup, and optional WireGuard VPN."
             ),
             fields=_extract_fields_from_model(BootstrapSpec),
+            step_templates=[
+                StepTemplate(
+                    id="apt_update",
+                    description="Refresh apt package index",
+                    code_block="apt-get update -y",
+                ),
+                StepTemplate(
+                    id="install_packages",
+                    description="Install baseline packages (ufw, wireguard, etc.)",
+                    code_block="DEBIAN_FRONTEND=noninteractive apt-get install -y <packages>",
+                ),
+                StepTemplate(
+                    id="create_admin_user",
+                    description="Create admin user and add to sudo/docker groups",
+                    code_block=(
+                        "addgroup <admin_user>\n"
+                        "adduser --disabled-password --gecos '' "
+                        "--ingroup <admin_user> <admin_user>\n"
+                        "usermod -aG sudo,docker <admin_user>"
+                    ),
+                ),
+                StepTemplate(
+                    id="install_authorized_keys",
+                    description="Install SSH public key for admin user",
+                    code_block=(
+                        "mkdir -p /home/<admin_user>/.ssh\n"
+                        "printf '%s\\n' '<pubkey>' "
+                        ">> /home/<admin_user>/.ssh/authorized_keys\n"
+                        "chmod 700 /home/<admin_user>/.ssh\n"
+                        "chmod 600 /home/<admin_user>/.ssh/authorized_keys\n"
+                        "chown -R <admin_user>:<admin_user> /home/<admin_user>/.ssh"
+                    ),
+                ),
+                StepTemplate(
+                    id="nopasswd_sudoers",
+                    description="Grant passwordless sudo to admin user",
+                    code_block=(
+                        "echo '<admin_user> ALL=(ALL) NOPASSWD:ALL' "
+                        "> /etc/sudoers.d/<admin_user>\n"
+                        "chmod 440 /etc/sudoers.d/<admin_user>"
+                    ),
+                ),
+                StepTemplate(
+                    id="configure_ssh_port",
+                    description="Set custom SSH port in sshd_config",
+                    code_block=(
+                        "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak\n"
+                        "sed -i 's/^#\\?Port .*/Port <ssh_port>/' "
+                        "/etc/ssh/sshd_config"
+                    ),
+                ),
+                StepTemplate(
+                    id="reload_sshd",
+                    description="Reload sshd (handles socket-activated Ubuntu 24.04+)",
+                    code_block=(
+                        "if systemctl is-active ssh.socket >/dev/null 2>&1; then\n"
+                        "  systemctl daemon-reload && systemctl restart ssh.socket\n"
+                        "else\n"
+                        "  systemctl reload ssh || systemctl reload sshd\n"
+                        "fi"
+                    ),
+                ),
+                StepTemplate(
+                    id="verify_admin_login_on_new_port",
+                    description="Gate: verify admin SSH key login works on the new port before locking down root",
+                    code_block="ssh -p <ssh_port> <admin_user>@<host> 'echo ok'",
+                ),
+                StepTemplate(
+                    id="disable_root_login",
+                    description="Disable root SSH login (runs only after gate passes)",
+                    code_block=(
+                        "sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin no/' "
+                        "/etc/ssh/sshd_config"
+                    ),
+                ),
+                StepTemplate(
+                    id="disable_password_auth",
+                    description="Disable password auth (runs only after gate passes)",
+                    code_block=(
+                        "sed -i 's/^#\\?PasswordAuthentication.*/"
+                        "PasswordAuthentication no/' /etc/ssh/sshd_config"
+                    ),
+                ),
+                StepTemplate(
+                    id="enable_firewall",
+                    description="Enable UFW with default-deny incoming policy",
+                    code_block=(
+                        "ufw default deny incoming\n"
+                        "ufw default allow outgoing\n"
+                        "ufw allow <ssh_port>/tcp\n"
+                        "ufw --force enable"
+                    ),
+                ),
+                StepTemplate(
+                    id="configure_wireguard",
+                    description="Install WireGuard config and bring up tunnel",
+                    condition={"field": "wireguard.enabled", "equals": True},
+                    code_block=(
+                        "install -m 600 /dev/stdin /etc/wireguard/<iface>.conf "
+                        "<< 'EOF'\n"
+                        "[Interface]\n"
+                        "PrivateKey = <server_private_key>\n"
+                        "Address = <server_vpn_ip>/24\n"
+                        "ListenPort = <wg_port>\n"
+                        "[Peer]\n"
+                        "PublicKey = <client_public_key>\n"
+                        "AllowedIPs = <client_vpn_ip>/32\n"
+                        "EOF\n"
+                        "systemctl enable --now wg-quick@<iface>"
+                    ),
+                ),
+            ],
             outputs=[
                 OutputTemplate(
                     name="ssh_alias",
@@ -414,6 +527,81 @@ def _register_catalog_entries() -> None:
                 "PostgreSQL, Nginx, Docker, and individual containers."
             ),
             fields=_extract_fields_from_model(ServiceSpec),
+            step_templates=[
+                StepTemplate(
+                    id="install_postgres",
+                    description="Install PostgreSQL server",
+                    condition={"field": "postgres", "present": True},
+                    code_block=(
+                        "DEBIAN_FRONTEND=noninteractive apt-get install -y "
+                        "postgresql-<postgres_version>"
+                    ),
+                ),
+                StepTemplate(
+                    id="create_postgres_role",
+                    description="Create PostgreSQL role with login password",
+                    condition={"field": "postgres.create_role", "present": True},
+                    code_block=(
+                        'sudo -u postgres psql -c "'
+                        "CREATE ROLE <role_name> LOGIN PASSWORD '<password>';\""
+                    ),
+                ),
+                StepTemplate(
+                    id="create_postgres_database",
+                    description="Create PostgreSQL database owned by role",
+                    condition={"field": "postgres.create_database", "present": True},
+                    code_block="sudo -u postgres createdb -O <owner> <database_name>",
+                ),
+                StepTemplate(
+                    id="install_docker",
+                    description="Install Docker Engine via official script",
+                    condition={"field": "docker", "present": True},
+                    code_block=(
+                        "curl -fsSL https://get.docker.com | sh\n" "systemctl enable --now docker"
+                    ),
+                ),
+                StepTemplate(
+                    id="pull_image",
+                    description="Pull container image from registry",
+                    condition={"field": "containers", "present": True},
+                    code_block="docker pull <image>:<tag>",
+                ),
+                StepTemplate(
+                    id="run_container",
+                    description="Start a detached container with configured ports, volumes, env",
+                    condition={"field": "containers", "present": True},
+                    code_block=(
+                        "docker run -d --name <container_name> \\\n"
+                        "  --restart unless-stopped \\\n"
+                        "  -p <host_port>:<container_port> \\\n"
+                        "  -v <host_path>:<container_path> \\\n"
+                        "  -e KEY=<value> \\\n"
+                        "  <image>:<tag>"
+                    ),
+                ),
+                StepTemplate(
+                    id="install_nginx",
+                    description="Install Nginx web server",
+                    condition={"field": "nginx", "present": True},
+                    code_block="DEBIAN_FRONTEND=noninteractive apt-get install -y nginx",
+                ),
+                StepTemplate(
+                    id="configure_nginx_site",
+                    description="Write Nginx site config and reload",
+                    condition={"field": "nginx.sites", "present": True},
+                    code_block=(
+                        "# upload: /etc/nginx/sites-available/<site_name>\n"
+                        "server {\n"
+                        "  listen 80;\n"
+                        "  server_name <domain>;\n"
+                        "  location / { proxy_pass http://<upstream>; }\n"
+                        "}\n"
+                        "ln -sf /etc/nginx/sites-available/<site_name> "
+                        "/etc/nginx/sites-enabled/<site_name>\n"
+                        "nginx -t && systemctl reload nginx"
+                    ),
+                ),
+            ],
             outputs=[
                 OutputTemplate(
                     name="postgres_host",
@@ -453,6 +641,30 @@ def _register_catalog_entries() -> None:
                 "Render Jinja2 templates and upload managed configuration files to a remote host."
             ),
             fields=_extract_fields_from_model(FileTemplateSpec),
+            step_templates=[
+                StepTemplate(
+                    id="mkdir_target_dir",
+                    description="Ensure target directory exists",
+                    code_block="mkdir -p <target_dir>",
+                ),
+                StepTemplate(
+                    id="upload_rendered_template",
+                    description="Write rendered template content to target path",
+                    code_block=(
+                        "# upload: <target_path>\n"
+                        "# rendered from <template_path> with variables "
+                        "<vars>\n"
+                        "<rendered_content>"
+                    ),
+                ),
+                StepTemplate(
+                    id="set_permissions",
+                    description="Apply owner and mode to the uploaded file",
+                    code_block=(
+                        "chown <owner>:<group> <target_path>\n" "chmod <mode> <target_path>"
+                    ),
+                ),
+            ],
         ),
     )
 
@@ -466,6 +678,89 @@ def _register_catalog_entries() -> None:
                 "start the stack, and verify health."
             ),
             fields=_extract_fields_from_model(ComposeProjectSpec),
+            step_templates=[
+                StepTemplate(
+                    id="mkdir_project_dir",
+                    description="Create the remote project directory",
+                    code_block="mkdir -p <project_directory>",
+                ),
+                StepTemplate(
+                    id="upload_compose_file",
+                    description="Upload the docker-compose.yml to the project directory",
+                    code_block=(
+                        "# upload: <project_directory>/<compose_file>\n"
+                        "<contents of user-provided docker-compose.yml>"
+                    ),
+                ),
+                StepTemplate(
+                    id="upload_templates",
+                    description="Render and upload Jinja2 templates (e.g. .env)",
+                    condition={"field": "project.templates", "present": True},
+                    code_block=(
+                        "# upload: <project_directory>/<rendered_filename>\n"
+                        "<rendered content from template + variables>"
+                    ),
+                ),
+                StepTemplate(
+                    id="compose_config_validate",
+                    description="Validate compose file syntax",
+                    code_block=(
+                        "cd <project_directory> && "
+                        "docker compose -f <compose_file> -p <project_name> "
+                        "config --quiet"
+                    ),
+                ),
+                StepTemplate(
+                    id="compose_pull",
+                    description="Pull images declared in the compose file",
+                    condition={"field": "project.pull_before_up", "equals": True},
+                    code_block=(
+                        "cd <project_directory> && "
+                        "docker compose -f <compose_file> -p <project_name> pull"
+                    ),
+                ),
+                StepTemplate(
+                    id="compose_up",
+                    description="Start the stack in detached mode",
+                    code_block=(
+                        "cd <project_directory> && "
+                        "docker compose -f <compose_file> -p <project_name> "
+                        "up -d"
+                    ),
+                ),
+                StepTemplate(
+                    id="compose_health_check",
+                    description="Poll `docker compose ps` until all containers report healthy",
+                    code_block=(
+                        "docker compose -f <compose_file> -p <project_name> "
+                        "ps --format json\n"
+                        "# retry every <interval>s up to <timeout>s, require all "
+                        "containers State=running and Health=healthy"
+                    ),
+                ),
+                StepTemplate(
+                    id="http_ready_probe",
+                    description="Poll application URL until it returns expected status",
+                    condition={"field": "project.healthcheck.http_ready", "present": True},
+                    code_block=(
+                        "curl -fsS -o /dev/null -w '%{http_code}' <url>\n"
+                        "# expect <expected_status>, retry <retries> times "
+                        "every <interval>s"
+                    ),
+                ),
+                StepTemplate(
+                    id="post_deploy_shell",
+                    description="Run shell command after deploy (post_deploy action)",
+                    condition={"field": "project.post_deploy", "present": True},
+                    code_block="bash -c '<command>'",
+                ),
+                StepTemplate(
+                    id="post_deploy_container_exec",
+                    description="Run command inside a container after deploy",
+                    condition={"field": "project.post_deploy", "present": True},
+                    code_block="docker exec <container> <command>",
+                ),
+            ],
             outputs=[
                 OutputTemplate(
                     name="project_dir",
@@ -486,6 +781,27 @@ def _register_catalog_entries() -> None:
                 "executed in dependency order."
             ),
             fields=_extract_fields_from_model(StackSpec),
+            step_templates=[
+                StepTemplate(
+                    id="resolve_dependency_order",
+                    description="Topological sort child resources by declared depends_on",
+                    code_block=(
+                        "# local (client-side): topological sort of "
+                        "resources[] by depends_on\n"
+                        "# emits a flat Plan where each child's steps are "
+                        "inserted in order"
+                    ),
+                ),
+                StepTemplate(
+                    id="execute_child_resources",
+                    description="Run each child resource's plan sequentially",
+                    code_block=(
+                        "# for each child resource in dependency order:\n"
+                        "#   dispatch to the child's kind planner + executor\n"
+                        "#   abort stack if any child fails"
+                    ),
+                ),
+            ],
         ),
     )
 
@@ -499,6 +815,17 @@ def _register_catalog_entries() -> None:
                 "Usable as a dependency gate in stacks."
             ),
             fields=_extract_fields_from_model(HttpCheckSpec),
+            step_templates=[
+                StepTemplate(
+                    id="http_get_with_retry",
+                    description="GET url, retry until expected status or timeout",
+                    code_block=(
+                        "curl -fsS -o /dev/null -w '%{http_code}' <url>\n"
+                        "# retry <retries> times every <interval>s, "
+                        "expect status <expected_status>"
+                    ),
+                ),
+            ],
         ),
     )
 
@@ -512,6 +839,44 @@ def _register_catalog_entries() -> None:
                 "with retention and scheduling via systemd timer."
             ),
             fields=_extract_fields_from_model(BackupJobSpec),
+            step_templates=[
+                StepTemplate(
+                    id="mkdir_backup_dir",
+                    description="Create backup destination directory",
+                    code_block="mkdir -p <backup_dir>",
+                ),
+                StepTemplate(
+                    id="write_backup_script",
+                    description="Install the backup script (postgres_dump or directory rsync/tar)",
+                    code_block=(
+                        "# upload: /usr/local/bin/<job_name>.sh\n"
+                        "# for postgres_dump:\n"
+                        "pg_dump -U <user> -h <host> -p <port> <database> \\\n"
+                        "  | gzip > <backup_dir>/<database>-$(date +%F-%H%M).sql.gz\n"
+                        "# for directory:\n"
+                        "tar -czf <backup_dir>/<name>-$(date +%F-%H%M).tar.gz "
+                        "<source_path>"
+                    ),
+                ),
+                StepTemplate(
+                    id="apply_retention",
+                    description="Delete backups older than retention window",
+                    code_block=("find <backup_dir> -type f -mtime +<retention_days> " "-delete"),
+                ),
+                StepTemplate(
+                    id="install_systemd_timer",
+                    description="Install the systemd timer + oneshot service for scheduled runs",
+                    code_block=(
+                        "# upload: /etc/systemd/system/<job_name>.service\n"
+                        "[Service]\nType=oneshot\n"
+                        "ExecStart=/usr/local/bin/<job_name>.sh\n\n"
+                        "# upload: /etc/systemd/system/<job_name>.timer\n"
+                        "[Timer]\nOnCalendar=<schedule>\nPersistent=true\n\n"
+                        "systemctl daemon-reload\n"
+                        "systemctl enable --now <job_name>.timer"
+                    ),
+                ),
+            ],
         ),
     )
 
@@ -524,6 +889,42 @@ def _register_catalog_entries() -> None:
                 "Deploy and manage a host-native systemd service from structured declarations."
             ),
             fields=_extract_fields_from_model(SystemdUnitSpec),
+            step_templates=[
+                StepTemplate(
+                    id="upload_service_unit",
+                    description="Write the .service unit file to /etc/systemd/system",
+                    code_block=(
+                        "# upload: /etc/systemd/system/<unit_name>.service\n"
+                        "[Unit]\nDescription=<description>\n\n"
+                        "[Service]\nType=<service_type>\n"
+                        "ExecStart=<exec_start>\nRestart=<restart>\n"
+                        "User=<user>\n\n"
+                        "[Install]\nWantedBy=multi-user.target"
+                    ),
+                ),
+                StepTemplate(
+                    id="upload_logrotate_config",
+                    description="Install optional logrotate config",
+                    condition={"field": "unit.logrotate", "present": True},
+                    code_block=(
+                        "# upload: /etc/logrotate.d/<unit_name>\n"
+                        "<log_path> {\n"
+                        "  rotate <rotate_count>\n"
+                        "  <frequency>\n"
+                        "  compress\n"
+                        "  missingok\n"
+                        "  notifempty\n"
+                        "}"
+                    ),
+                ),
+                StepTemplate(
+                    id="daemon_reload_and_enable",
+                    description="Reload systemd and enable+start the service",
+                    code_block=(
+                        "systemctl daemon-reload\n" "systemctl enable --now <unit_name>.service"
+                    ),
+                ),
+            ],
             outputs=[
                 OutputTemplate(
                     name="unit_name",
@@ -544,6 +945,36 @@ def _register_catalog_entries() -> None:
                 "and companion oneshot .service unit."
             ),
             fields=_extract_fields_from_model(SystemdTimerSpec),
+            step_templates=[
+                StepTemplate(
+                    id="upload_oneshot_service",
+                    description="Write the oneshot .service unit triggered by the timer",
+                    code_block=(
+                        "# upload: /etc/systemd/system/<timer_name>.service\n"
+                        "[Unit]\nDescription=<description>\n\n"
+                        "[Service]\nType=oneshot\n"
+                        "ExecStart=<exec_start>\n"
+                        "User=<user>"
+                    ),
+                ),
+                StepTemplate(
+                    id="upload_timer_unit",
+                    description="Write the .timer unit with schedule",
+                    code_block=(
+                        "# upload: /etc/systemd/system/<timer_name>.timer\n"
+                        "[Unit]\nDescription=<description>\n\n"
+                        "[Timer]\nOnCalendar=<schedule>\nPersistent=true\n\n"
+                        "[Install]\nWantedBy=timers.target"
+                    ),
+                ),
+                StepTemplate(
+                    id="daemon_reload_and_enable_timer",
+                    description="Reload systemd and enable+start the timer",
+                    code_block=(
+                        "systemctl daemon-reload\n" "systemctl enable --now <timer_name>.timer"
+                    ),
+                ),
+            ],
         ),
     )
 
@@ -557,6 +988,50 @@ def _register_catalog_entries() -> None:
                 "and privilege grants."
             ),
             fields=_extract_fields_from_model(PostgresEnsureSpec),
+            step_templates=[
+                StepTemplate(
+                    id="ensure_user",
+                    description="Create or update a PostgreSQL role idempotently",
+                    code_block=(
+                        'sudo -u postgres psql -d postgres -c "\n'
+                        "  DO \\$\\$ BEGIN\n"
+                        "    IF NOT EXISTS (SELECT FROM pg_roles "
+                        "WHERE rolname='<user>') THEN\n"
+                        "      CREATE ROLE <user> LOGIN PASSWORD '<password>';\n"
+                        "    ELSE\n"
+                        "      ALTER ROLE <user> PASSWORD '<password>';\n"
+                        "    END IF;\n"
+                        "  END \\$\\$;\n"
+                        '"'
+                    ),
+                ),
+                StepTemplate(
+                    id="ensure_database",
+                    description="Create database if missing, owned by user",
+                    code_block=(
+                        "sudo -u postgres psql -tc "
+                        "\"SELECT 1 FROM pg_database WHERE datname='<database>'\" "
+                        "| grep -q 1 || "
+                        "sudo -u postgres createdb -O <owner> <database>"
+                    ),
+                ),
+                StepTemplate(
+                    id="ensure_extension",
+                    description="Install a PostgreSQL extension in a database",
+                    code_block=(
+                        "sudo -u postgres psql -d <database> -c "
+                        '"CREATE EXTENSION IF NOT EXISTS <extension>;"'
+                    ),
+                ),
+                StepTemplate(
+                    id="ensure_grant",
+                    description="Grant privileges on a database/schema to a role",
+                    code_block=(
+                        "sudo -u postgres psql -d <database> -c "
+                        '"GRANT <privileges> ON <object> TO <role>;"'
+                    ),
+                ),
+            ],
             outputs=[
                 OutputTemplate(
                     name="database_url",
@@ -580,6 +1055,24 @@ def _register_catalog_entries() -> None:
                 "native package manager (apt, yum/dnf)."
             ),
             fields=_extract_fields_from_model(PackageSpec),
+            step_templates=[
+                StepTemplate(
+                    id="apt_install",
+                    description="Install packages via apt (state=present)",
+                    condition={"field": "state", "equals": "present"},
+                    code_block=(
+                        "apt-get update -y\n"
+                        "DEBIAN_FRONTEND=noninteractive apt-get install -y "
+                        "<packages>"
+                    ),
+                ),
+                StepTemplate(
+                    id="apt_remove",
+                    description="Remove packages via apt (state=absent)",
+                    condition={"field": "state", "equals": "absent"},
+                    code_block=("DEBIAN_FRONTEND=noninteractive apt-get remove -y " "<packages>"),
+                ),
+            ],
         ),
     )
 

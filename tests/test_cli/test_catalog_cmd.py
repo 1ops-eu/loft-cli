@@ -115,6 +115,32 @@ class TestCatalogShow:
         assert result.exit_code == 0
         assert "database_url" in result.output
 
+    def test_catalog_show_bootstrap_has_steps_section(self):
+        result = runner.invoke(app, ["catalog", "show", "bootstrap"])
+        assert result.exit_code == 0
+        assert "Steps" in result.output
+
+    def test_catalog_show_bootstrap_without_code_hides_shell(self):
+        result = runner.invoke(app, ["catalog", "show", "bootstrap"])
+        assert result.exit_code == 0
+        assert "apt-get update" not in result.output
+        assert "--code" in result.output
+
+    def test_catalog_show_bootstrap_with_code_flag_reveals_shell(self):
+        result = runner.invoke(app, ["catalog", "show", "bootstrap", "--code"])
+        assert result.exit_code == 0
+        assert "apt-get update" in result.output
+
+    def test_catalog_show_short_c_flag_also_works(self):
+        result = runner.invoke(app, ["catalog", "show", "bootstrap", "-c"])
+        assert result.exit_code == 0
+        assert "apt-get update" in result.output
+
+    def test_catalog_show_compose_project_with_code(self):
+        result = runner.invoke(app, ["catalog", "show", "compose_project", "--code"])
+        assert result.exit_code == 0
+        assert "docker compose" in result.output
+
 
 # ------------------------------------------------------------------ #
 # catalog export
@@ -175,6 +201,45 @@ class TestCatalogExport:
                 assert "name" in output
                 assert "description" in output
                 assert "example" in output
+
+    def test_catalog_export_each_kind_has_step_templates_key(self):
+        result = runner.invoke(app, ["catalog", "export"])
+        data = json.loads(result.output)
+        for kind_obj in data["kinds"]:
+            assert "step_templates" in kind_obj, f"Missing 'step_templates' in: {kind_obj['kind']}"
+            assert isinstance(kind_obj["step_templates"], list)
+
+    def test_catalog_export_step_templates_have_code_block(self):
+        result = runner.invoke(app, ["catalog", "export"])
+        data = json.loads(result.output)
+        kinds_map = {k["kind"]: k for k in data["kinds"]}
+        bootstrap_steps = kinds_map["bootstrap"]["step_templates"]
+        assert len(bootstrap_steps) > 0
+        for step in bootstrap_steps:
+            assert "id" in step
+            assert "description" in step
+            assert "code_block" in step
+
+    def test_catalog_export_bootstrap_apt_update_code_block(self):
+        result = runner.invoke(app, ["catalog", "export"])
+        data = json.loads(result.output)
+        kinds_map = {k["kind"]: k for k in data["kinds"]}
+        bootstrap_steps = kinds_map["bootstrap"]["step_templates"]
+        apt_update = next((s for s in bootstrap_steps if s["id"] == "apt_update"), None)
+        assert apt_update is not None
+        assert "apt-get update" in apt_update["code_block"]
+
+    def test_catalog_export_all_kinds_have_step_templates_populated(self):
+        """Every built-in kind should have at least one step template with a code block."""
+        result = runner.invoke(app, ["catalog", "export"])
+        data = json.loads(result.output)
+        for kind_obj in data["kinds"]:
+            steps = kind_obj["step_templates"]
+            assert len(steps) > 0, f"Kind '{kind_obj['kind']}' has no step_templates"
+            for step in steps:
+                assert step[
+                    "code_block"
+                ], f"Step '{step['id']}' in kind '{kind_obj['kind']}' has no code_block"
 
     def test_catalog_export_contains_all_builtin_kinds(self):
         result = runner.invoke(app, ["catalog", "export"])
