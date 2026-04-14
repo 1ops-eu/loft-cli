@@ -796,6 +796,68 @@ These examples double as acceptance tests for the `post_deploy` and `kind: http_
 - Secrets are generated on first apply, persisted on the agent, and not re-generated on re-apply
 - Both examples are covered by smoke tests (`make smoke`)
 
+### Catalog Code Blocks
+
+A third focus of v1.1 is making the feature catalog self-documenting at the Unix level — showing operators the actual shell commands behind each step, not just human descriptions.
+
+#### `loft-cli catalog show <kind> --code`
+
+Add a `--code / -c` flag to `catalog show`. When set, each step entry renders the shell command template it will execute, with `<placeholder>` variables where spec-provided values are substituted at plan-time:
+
+```
+$ loft-cli catalog show bootstrap --code
+
+Steps
+  create_admin_user   Create admin user with sudo and docker groups
+                      ┌────────────────────────────────────────────────
+                      │ useradd -m -s /bin/bash \
+                      │   -G sudo,docker <admin_user>
+                      └────────────────────────────────────────────────
+
+  configure_sshd      Harden SSH daemon config
+                      ┌────────────────────────────────────────────────
+                      │ # upload: /etc/ssh/sshd_config
+                      │ Port <ssh_port>
+                      │ PermitRootLogin no
+                      └────────────────────────────────────────────────
+```
+
+File-upload steps show a `# upload: <target_path>` header followed by a representative excerpt of the uploaded content. Gate and verify steps show their check command.
+
+#### `loft-cli catalog export` — `code_block` key
+
+The `export` command already emits step templates as JSON. With this change, each step template gains a `code_block` field containing the same shell command template shown by `--code`:
+
+```json
+{
+  "kind": "bootstrap",
+  "step_templates": [
+    {
+      "id": "create_admin_user",
+      "description": "Create admin user with sudo and docker groups",
+      "code_block": "useradd -m -s /bin/bash \\\n  -G sudo,docker <admin_user>"
+    }
+  ]
+}
+```
+
+#### Implementation
+
+| Item | Description |
+|---|---|
+| `StepTemplate.code_block` | New optional field on `StepTemplate` in `loft_cli_core/registry/catalog.py` |
+| Built-in catalog entries | All 12 built-in kinds populated with `step_templates` including `code_block` in `_builtins.py` |
+| `catalog show --code` | New `--code / -c` flag in `cli.py`; renders code blocks via `rich` |
+| `catalog export` | No code change; `code_block` is included automatically via `model_dump()` |
+
+**Acceptance criteria:**
+- `loft-cli catalog show bootstrap --code` prints shell command templates for every step
+- `loft-cli catalog show bootstrap` (without `--code`) is unchanged
+- `loft-cli catalog export | python -m json.tool` includes `code_block` on each step template
+- All 12 built-in kinds have populated step templates with code blocks
+
+---
+
 ### Developer Ergonomics
 
 A second focus of v1.1 is improving the day-to-day experience of working with loft-cli project directories — specifically around env file management and inventory access.

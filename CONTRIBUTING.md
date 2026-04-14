@@ -208,15 +208,109 @@ The client and agent must have matching major versions. A v1.x client requires a
 
 Releases are triggered by Git tags. Only maintainers create releases.
 
-1. Bump the version in all three `packages/*/pyproject.toml` files and the root `pyproject.toml`
-2. Commit: `chore(release): bump version to X.Y.Z`
-3. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
+### Step 1 — Verify the branch is ready
 
-GitHub Actions automatically:
-- Builds binaries for Linux (amd64, arm64) and macOS (arm64)
+```bash
+# All tests and smoke tests must pass before tagging
+make lint && make test && make smoke
+```
+
+Fix any failures before continuing. Do not tag a broken branch.
+
+### Step 2 — Update CHANGELOG.md
+
+```bash
+# Generate from Conventional Commits history (requires git-cliff)
+make changelog
+```
+
+Review the output. Edit manually if any entry is unclear or miscategorised. The changelog entry for the new version should be at the top.
+
+### Step 3 — Bump versions
+
+Bump the version string in **all four** locations — they must be identical:
+
+```
+packages/core/pyproject.toml       ← loft-cli-core package version
+packages/client/pyproject.toml     ← loft-cli package version
+packages/agent/pyproject.toml      ← loft-cli-agent package version
+pyproject.toml                     ← root (dev tooling / monorepo marker)
+```
+
+`packages/core/loft_cli_core/__init__.py` reads the version dynamically from the installed package metadata — no manual edit needed there.
+
+Also update any version references in documentation:
+
+```
+README.md                          ← installation examples, badge, version table
+docs/                              ← any version-pinned code blocks or references
+```
+
+### Step 4 — Update ROADMAP.md and CLAUDE.md
+
+Mark completed items with `✅` in both files:
+
+- In `ROADMAP.md`: tick off every item delivered in this release under the relevant version heading
+- In `CLAUDE.md`: update the "Current Capabilities" table to reflect the new version and any newly completed features
+
+### Step 5 — Commit
+
+```bash
+git add -A
+git commit -m "chore(release): bump version to X.Y.Z"
+```
+
+### Step 6 — Tag and push
+
+```bash
+git tag vX.Y.Z
+git push origin main
+git push origin vX.Y.Z
+```
+
+Pushing the tag triggers the release pipeline in GitHub Actions.
+
+### Step 7 — What CI does automatically
+
+Once the tag is pushed, GitHub Actions:
+
+- Builds client binaries for Linux (amd64, arm64) and macOS (arm64)
 - Builds agent binaries for Linux (amd64, arm64)
 - Generates `checksums.txt` (SHA-256 of all binaries)
-- Creates a GitHub Release with all assets
-- Publishes all three packages to PyPI
+- Creates a GitHub Release with all assets attached
+- Publishes all three packages (`loft-cli-core`, `loft-cli`, `loft-cli-agent`) to PyPI
 - Builds and pushes the Docker image to `ghcr.io/1ops-eu/loft-cli`
 - Publishes updated docs to GitHub Pages
+
+### Step 8 — Post-release verification
+
+After CI completes (~10 min), verify:
+
+```bash
+# PyPI publish
+pip install --upgrade loft-cli && loft-cli version
+
+# GitHub Release
+gh release view vX.Y.Z
+
+# Docker image
+docker pull ghcr.io/1ops-eu/loft-cli:X.Y.Z && \
+  docker run --rm ghcr.io/1ops-eu/loft-cli:X.Y.Z version
+
+# Docs site — confirm new version appears at https://1ops-eu.github.io/loft-cli
+```
+
+### Summary checklist
+
+```
+[ ] make lint && make test && make smoke — all pass
+[ ] CHANGELOG.md updated (make changelog + review)
+[ ] Version bumped in all 4 pyproject.toml files
+[ ] README.md / docs version references updated
+[ ] ROADMAP.md — completed items ticked off
+[ ] CLAUDE.md — capabilities table updated
+[ ] Commit: chore(release): bump version to X.Y.Z
+[ ] git tag vX.Y.Z && git push origin main && git push origin vX.Y.Z
+[ ] CI passes (binaries, PyPI, Docker, GitHub Pages)
+[ ] Post-release: pip install, gh release view, docker pull, docs site
+```
