@@ -2,86 +2,86 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/changelog/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/cli-reference/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/concepts/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/contributing/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/getting-started/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/operations/drift-reconcile/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/operations/fleet/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/operations/secret-rotation/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/operations/wireguard/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/spec-reference/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/spec-reference/backup-job/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/spec-reference/bootstrap/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/spec-reference/compose-project/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/spec-reference/file-template/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/spec-reference/http-check/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/spec-reference/postgres-ensure/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/spec-reference/service/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/spec-reference/stack/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/spec-reference/systemd-timer/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
     <url>
          <loc>https://1ops-eu.github.io/loft-cli/spec-reference/systemd-unit/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-14</lastmod>
     </url>
 </urlset>

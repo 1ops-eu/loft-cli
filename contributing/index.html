@@ -1324,6 +1324,111 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Release Process">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-verify-the-branch-is-ready" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1 — Verify the branch is ready
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-update-changelogmd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2 — Update CHANGELOG.md
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-bump-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3 — Bump versions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-update-roadmapmd-and-claudemd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4 — Update ROADMAP.md and CLAUDE.md
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-5-commit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5 — Commit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-6-tag-and-push" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 6 — Tag and push
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-7-what-ci-does-automatically" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 7 — What CI does automatically
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-8-post-release-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 8 — Post-release verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#summary-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary checklist
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1573,6 +1678,111 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Release Process">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-verify-the-branch-is-ready" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1 — Verify the branch is ready
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-update-changelogmd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2 — Update CHANGELOG.md
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-bump-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3 — Bump versions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-update-roadmapmd-and-claudemd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4 — Update ROADMAP.md and CLAUDE.md
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-5-commit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5 — Commit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-6-tag-and-push" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 6 — Tag and push
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-7-what-ci-does-automatically" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 7 — What CI does automatically
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-8-post-release-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 8 — Post-release verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#summary-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary checklist
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1803,19 +2013,81 @@
 <hr />
 <h2 id="release-process">Release Process<a class="headerlink" href="#release-process" title="Permanent link">&para;</a></h2>
 <p>Releases are triggered by Git tags. Only maintainers create releases.</p>
-<ol>
-<li>Bump the version in all three <code>packages/*/pyproject.toml</code> files and the root <code>pyproject.toml</code></li>
-<li>Commit: <code>chore(release): bump version to X.Y.Z</code></li>
-<li>Tag: <code>git tag vX.Y.Z &amp;&amp; git push origin vX.Y.Z</code></li>
-</ol>
-<p>GitHub Actions automatically:
-- Builds binaries for Linux (amd64, arm64) and macOS (arm64)
-- Builds agent binaries for Linux (amd64, arm64)
-- Generates <code>checksums.txt</code> (SHA-256 of all binaries)
-- Creates a GitHub Release with all assets
-- Publishes all three packages to PyPI
-- Builds and pushes the Docker image to <code>ghcr.io/1ops-eu/loft-cli</code>
-- Publishes updated docs to GitHub Pages</p>
+<h3 id="step-1-verify-the-branch-is-ready">Step 1 — Verify the branch is ready<a class="headerlink" href="#step-1-verify-the-branch-is-ready" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># All tests and smoke tests must pass before tagging</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>make<span class="w"> </span>lint<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>make<span class="w"> </span><span class="nb">test</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>make<span class="w"> </span>smoke
+</span></code></pre></div>
+<p>Fix any failures before continuing. Do not tag a broken branch.</p>
+<h3 id="step-2-update-changelogmd">Step 2 — Update CHANGELOG.md<a class="headerlink" href="#step-2-update-changelogmd" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Generate from Conventional Commits history (requires git-cliff)</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>make<span class="w"> </span>changelog
+</span></code></pre></div>
+<p>Review the output. Edit manually if any entry is unclear or miscategorised. The changelog entry for the new version should be at the top.</p>
+<h3 id="step-3-bump-versions">Step 3 — Bump versions<a class="headerlink" href="#step-3-bump-versions" title="Permanent link">&para;</a></h3>
+<p>Bump the version string in <strong>all four</strong> locations — they must be identical:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>packages/core/pyproject.toml       ← loft-cli-core package version
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>packages/client/pyproject.toml     ← loft-cli package version
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>packages/agent/pyproject.toml      ← loft-cli-agent package version
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>pyproject.toml                     ← root (dev tooling / monorepo marker)
+</span></code></pre></div>
+<p><code>packages/core/loft_cli_core/__init__.py</code> reads the version dynamically from the installed package metadata — no manual edit needed there.</p>
+<p>Also update any version references in documentation:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>README.md                          ← installation examples, badge, version table
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>docs/                              ← any version-pinned code blocks or references
+</span></code></pre></div>
+<h3 id="step-4-update-roadmapmd-and-claudemd">Step 4 — Update ROADMAP.md and CLAUDE.md<a class="headerlink" href="#step-4-update-roadmapmd-and-claudemd" title="Permanent link">&para;</a></h3>
+<p>Mark completed items with <code>✅</code> in both files:</p>
+<ul>
+<li>In <code>ROADMAP.md</code>: tick off every item delivered in this release under the relevant version heading</li>
+<li>In <code>CLAUDE.md</code>: update the "Current Capabilities" table to reflect the new version and any newly completed features</li>
+</ul>
+<h3 id="step-5-commit">Step 5 — Commit<a class="headerlink" href="#step-5-commit" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>git<span class="w"> </span>add<span class="w"> </span>-A
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;chore(release): bump version to X.Y.Z&quot;</span>
+</span></code></pre></div>
+<h3 id="step-6-tag-and-push">Step 6 — Tag and push<a class="headerlink" href="#step-6-tag-and-push" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>git<span class="w"> </span>tag<span class="w"> </span>vX.Y.Z
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>git<span class="w"> </span>push<span class="w"> </span>origin<span class="w"> </span>main
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>git<span class="w"> </span>push<span class="w"> </span>origin<span class="w"> </span>vX.Y.Z
+</span></code></pre></div>
+<p>Pushing the tag triggers the release pipeline in GitHub Actions.</p>
+<h3 id="step-7-what-ci-does-automatically">Step 7 — What CI does automatically<a class="headerlink" href="#step-7-what-ci-does-automatically" title="Permanent link">&para;</a></h3>
+<p>Once the tag is pushed, GitHub Actions:</p>
+<ul>
+<li>Builds client binaries for Linux (amd64, arm64) and macOS (arm64)</li>
+<li>Builds agent binaries for Linux (amd64, arm64)</li>
+<li>Generates <code>checksums.txt</code> (SHA-256 of all binaries)</li>
+<li>Creates a GitHub Release with all assets attached</li>
+<li>Publishes all three packages (<code>loft-cli-core</code>, <code>loft-cli</code>, <code>loft-cli-agent</code>) to PyPI</li>
+<li>Builds and pushes the Docker image to <code>ghcr.io/1ops-eu/loft-cli</code></li>
+<li>Publishes updated docs to GitHub Pages</li>
+</ul>
+<h3 id="step-8-post-release-verification">Step 8 — Post-release verification<a class="headerlink" href="#step-8-post-release-verification" title="Permanent link">&para;</a></h3>
+<p>After CI completes (~10 min), verify:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># PyPI publish</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span>loft-cli<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>loft-cli<span class="w"> </span>version
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="c1"># GitHub Release</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>gh<span class="w"> </span>release<span class="w"> </span>view<span class="w"> </span>vX.Y.Z
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="c1"># Docker image</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/1ops-eu/loft-cli:X.Y.Z<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="w">  </span>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>ghcr.io/1ops-eu/loft-cli:X.Y.Z<span class="w"> </span>version
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>
+</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="c1"># Docs site — confirm new version appears at https://1ops-eu.github.io/loft-cli</span>
+</span></code></pre></div>
+<h3 id="summary-checklist">Summary checklist<a class="headerlink" href="#summary-checklist" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>[ ] make lint &amp;&amp; make test &amp;&amp; make smoke — all pass
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>[ ] CHANGELOG.md updated (make changelog + review)
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>[ ] Version bumped in all 4 pyproject.toml files
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>[ ] README.md / docs version references updated
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>[ ] ROADMAP.md — completed items ticked off
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>[ ] CLAUDE.md — capabilities table updated
+</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>[ ] Commit: chore(release): bump version to X.Y.Z
+</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>[ ] git tag vX.Y.Z &amp;&amp; git push origin main &amp;&amp; git push origin vX.Y.Z
+</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>[ ] CI passes (binaries, PyPI, Docker, GitHub Pages)
+</span><span id="__span-17-10"><a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>[ ] Post-release: pip install, gh release view, docker pull, docs site
+</span></code></pre></div>
 
 
 
