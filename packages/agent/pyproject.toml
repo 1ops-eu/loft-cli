@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loft-cli-agent"
-version = "1.0.0"
+version = "1.0.1"
 description = "Server-side agent for loft-cli — executes plans locally on managed servers"
 requires-python = ">=3.11"
 dependencies = [

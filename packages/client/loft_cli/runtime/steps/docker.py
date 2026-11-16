@@ -4,7 +4,10 @@ from __future__ import annotations
 
 
 def install_docker() -> str:
-    return "bash -c 'curl -fsSL https://get.docker.com | sh'"
+    """Install Docker only when it is missing. The installer script also upgrades an existing installation, and that
+    restarts docker.service: every container on the host stops, a loft-cli applying from one of them included.
+    """
+    return "bash -c 'command -v docker >/dev/null 2>&1 || curl -fsSL https://get.docker.com | sh'"
 
 
 def enable_docker() -> str:

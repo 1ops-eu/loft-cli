@@ -11,6 +11,16 @@ loft-cli uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.1] - 2026-11-16
+
+### Fixed
+
+- `install_docker` installs Docker only when `docker` is missing. Before, every apply of a `compose_project` (and of
+  a service with Docker) ran the installer script again; on a host with Docker it upgraded the packages and restarted
+  `docker.service`, which stopped all containers, a loft-cli applying from inside one of them included.
+
+---
+
 ## [0.11.0] - 2026-03-15
 
 ### Features
